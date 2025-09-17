@@ -1,0 +1,11 @@
+numpy
+faiss-cpu
+Flask
+Flask-Cors
+sentence-transformers
+scikit-learn
+transformers
+torch
+cryptography
+requests
+urllib3

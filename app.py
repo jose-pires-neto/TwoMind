@@ -7,6 +7,7 @@ import os
 import pickle
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import DBSCAN
 import re
 import warnings
 import hashlib
@@ -21,28 +22,40 @@ import urllib.request
 import zipfile
 import shutil
 import stat
+import json
+from collections import defaultdict, Counter
+import uuid
 warnings.filterwarnings("ignore")
 
-# --- 1. Configurações de Segurança ---
+# --- CORREÇÃO PARA CLOUDFLARE PROXY ---
+class ProxyFix(object):
+    """Corrige headers quando atrás de proxy (Cloudflare)"""
+    def __init__(self, app):
+        self.app = app
 
-# Arquivo de configuração do usuário
+    def __call__(self, environ, start_response):
+        scheme = environ.get('HTTP_X_FORWARDED_PROTO', '')
+        if scheme:
+            environ['wsgi.url_scheme'] = scheme
+        return self.app(environ, start_response)
+
+# --- 1. Configurações de Segurança ---
 CONFIG_FILE = "user_config.json"
 CLOUDFLARED_DIR = "cloudflared"
-
-# Define os caminhos para os arquivos de salvamento
 FAISS_INDEX_PATH = "my_index.faiss"
 NOTES_STORAGE_PATH = "notes.pkl"
+CATEGORIES_PATH = "categories.pkl"
+ANALYTICS_PATH = "analytics.pkl"
 
-# Inicializa o servidor web Flask
 app = Flask(__name__, template_folder='.', static_folder='.')
+app.wsgi_app = ProxyFix(app.wsgi_app)  # CORREÇÃO APLICADA
 CORS(app, supports_credentials=True)
 
-# Configurações de segurança
-app.config['SECRET_KEY'] = secrets.token_hex(32)  # Chave secreta aleatória
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)  # Sessão dura 24h
-app.config['SESSION_COOKIE_HTTPONLY'] = True  # Cookie não acessível via JavaScript
-app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'  # Proteção CSRF
-app.config['SESSION_COOKIE_SECURE'] = False  # HTTP para simplicidade
+app.config['SECRET_KEY'] = secrets.token_hex(32)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Mudado de 'Strict' para 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False
 
 def load_user_config():
     """Carrega configurações do usuário ou cria configuração inicial."""
@@ -52,9 +65,8 @@ def load_user_config():
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     else:
-        # Primeira execução - cria configuração
         print("\n" + "="*50)
-        print("🔒 CONFIGURAÇÃO INICIAL DE SEGURANÇA")
+        print("🔐 CONFIGURAÇÃO INICIAL DE SEGURANÇA")
         print("="*50)
         print("Para acessar sua aplicação remotamente, você precisa definir uma senha.")
         print("Esta senha protegerá suas memórias pessoais.\n")
@@ -70,7 +82,6 @@ def load_user_config():
             print("❌ Senhas não coincidem! Reinicie a aplicação.")
             exit(1)
         
-        # Hash da senha
         salt = secrets.token_hex(32)
         password_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
         
@@ -103,7 +114,6 @@ def download_cloudflared():
     system = platform.system().lower()
     machine = platform.machine().lower()
     
-    # Determina a URL de download baseada no OS e arquitetura
     if system == "windows":
         if "64" in machine or "amd64" in machine:
             url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
@@ -111,13 +121,13 @@ def download_cloudflared():
         else:
             url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-386.exe"
             filename = "cloudflared.exe"
-    elif system == "darwin":  # macOS
+    elif system == "darwin":
         if "arm" in machine or "m1" in machine or "m2" in machine:
             url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64"
         else:
             url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64"
         filename = "cloudflared"
-    else:  # Linux
+    else:
         if "arm" in machine:
             if "64" in machine:
                 url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
@@ -141,7 +151,6 @@ def download_cloudflared():
     try:
         urllib.request.urlretrieve(url, cloudflared_path)
         
-        # Torna executável no Linux/macOS
         if system != "windows":
             st = os.stat(cloudflared_path)
             os.chmod(cloudflared_path, st.st_mode | stat.S_IEXEC)
@@ -163,23 +172,20 @@ def start_cloudflare_tunnel():
     def run_tunnel():
         try:
             print("🚀 Iniciando Cloudflare Tunnel...")
-            # Comando para criar um túnel temporário
             cmd = [cloudflared_path, "tunnel", "--url", "http://localhost:5000"]
             
-            # Inicia o processo
             process = subprocess.Popen(
                 cmd, 
                 stdout=subprocess.PIPE, 
-                stderr=subprocess.STDOUT,  # Redireciona stderr para stdout
+                stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=0,  # Sem buffer
+                bufsize=0,
                 universal_newlines=True
             )
             
             print("⏳ Aguardando URL do túnel...")
             tunnel_found = False
             
-            # Monitora a saída linha por linha
             while True:
                 try:
                     line = process.stdout.readline()
@@ -188,75 +194,51 @@ def start_cloudflare_tunnel():
                     
                     line = line.strip()
                     
-                    # Debug: mostra as linhas para identificar o problema
                     if "tunnel" in line.lower() or "cloudflare" in line.lower():
-                        print(f"🐛 Debug: {line}")
+                        print(f"🛠 Debug: {line}")
                     
-                    # Procura por URLs do túnel com regex mais abrangente
                     import re
                     urls = re.findall(r'https://[a-zA-Z0-9\-]+\.(?:trycloudflare\.com|cfargotunnel\.com|argotunnel\.com)', line)
                     
                     if urls and not tunnel_found:
                         tunnel_url = urls[0]
                         tunnel_found = True
-                        print(f"\n🌍 TÚNEL CLOUDFLARE ATIVO!")
+                        print(f"\n🌐 TÚNEL CLOUDFLARE ATIVO!")
                         print(f"🔗 URL Externa: {tunnel_url}")
                         print(f"📱 Acesse de qualquer lugar: {tunnel_url}")
                         print(f"🔒 Protegido com senha")
                         print("="*60)
                         
-                        # Salva a URL em um arquivo para referência
                         with open("tunnel_url.txt", "w") as f:
                             f.write(tunnel_url)
                         
                         break
                     
-                    # Verifica se há erro
                     if "error" in line.lower() or "failed" in line.lower():
-                        print(f"⚠️  Possível erro: {line}")
+                        print(f"⚠️ Possível erro: {line}")
                         
                 except Exception as e:
-                    print(f"⚠️  Erro ao ler linha: {e}")
+                    print(f"⚠️ Erro ao ler linha: {e}")
                     break
             
             if not tunnel_found:
-                print("⚠️  URL do túnel não encontrada. Tentando comando alternativo...")
-                # Tenta comando mais simples
-                process.terminate()
-                time.sleep(1)
-                
-                # Comando alternativo
-                cmd_alt = [cloudflared_path, "tunnel", "--hello-world"]
-                process_alt = subprocess.Popen(cmd_alt, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                
-                for line in process_alt.stdout:
-                    line = line.strip()
-                    print(f"🐛 Alt Debug: {line}")
-                    if "https://" in line:
-                        urls = re.findall(r'https://[a-zA-Z0-9\-\.]+', line)
-                        if urls:
-                            print(f"🌍 Túnel alternativo encontrado: {urls[0]}")
-                            break
+                print("⚠️ URL do túnel não encontrada. Verifique a conexão.")
                     
         except Exception as e:
             print(f"❌ Erro no túnel Cloudflare: {e}")
             print("💡 Tentativa manual: Execute no terminal separado:")
             print(f"   {cloudflared_path} tunnel --url http://localhost:5000")
     
-    # Inicia o túnel em uma thread separada
     tunnel_thread = threading.Thread(target=run_tunnel, daemon=True)
     tunnel_thread.start()
-    
-    # Aguarda mais tempo para o túnel inicializar
     time.sleep(5)
-    
     return tunnel_thread
 
 def require_auth(f):
     """Decorator que exige autenticação para acessar rotas protegidas."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        is_api_request = any(request.path.startswith(p) for p in ['/get-', '/add-', '/ask', '/ai-', '/stats'])
+        is_api_request = any(request.path.startswith(p) for p in ['/get-', '/add-', '/ask', '/ai-', '/stats', '/edit-', '/delete-', '/categorize'])
 
         if 'authenticated' not in session or not session['authenticated']:
             if is_api_request or request.is_json:
@@ -275,27 +257,37 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Carrega configuração do usuário
 user_config = load_user_config()
 
-# --- Configuração da IA e Modelo de Embeddings ---
-AI_MODEL_NAME = "microsoft/DialoGPT-small"
+# --- 2. Configuração Melhorada da IA ---
+AI_MODEL_NAME = "microsoft/DialoGPT-medium"
 ai_tokenizer = None
 ai_model = None
 AI_AVAILABLE = False
 
+FALLBACK_MODEL = "gpt2"
+
 def setup_local_ai():
-    """Configura a IA local usando transformers."""
+    """Configura a IA local usando modelos mais avançados."""
     global ai_tokenizer, ai_model, AI_AVAILABLE
     try:
-        print("🤖 Carregando modelo de IA local...")
+        print("🤖 Carregando modelo de IA melhorado...")
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        ai_tokenizer = AutoTokenizer.from_pretrained(AI_MODEL_NAME, padding_side='left')
-        ai_model = AutoModelForCausalLM.from_pretrained(AI_MODEL_NAME)
+        
+        try:
+            ai_tokenizer = AutoTokenizer.from_pretrained(AI_MODEL_NAME, padding_side='left')
+            ai_model = AutoModelForCausalLM.from_pretrained(AI_MODEL_NAME)
+            print(f"✅ IA avançada carregada: {AI_MODEL_NAME}")
+        except Exception as e:
+            print(f"⚠️ Modelo principal falhou, tentando fallback: {e}")
+            ai_tokenizer = AutoTokenizer.from_pretrained(FALLBACK_MODEL, padding_side='left')
+            ai_model = AutoModelForCausalLM.from_pretrained(FALLBACK_MODEL)
+            print(f"✅ IA fallback carregada: {FALLBACK_MODEL}")
+        
         if ai_tokenizer.pad_token is None:
             ai_tokenizer.pad_token = ai_tokenizer.eos_token
         AI_AVAILABLE = True
-        print(f"✅ IA local carregada: {AI_MODEL_NAME}")
+        
     except (ImportError, OSError) as e:
         print(f"❌ Modelo de IA não pôde ser carregado: {e}. IA indisponível.")
         AI_AVAILABLE = False
@@ -306,10 +298,147 @@ print("✅ Modelo de embeddings carregado.")
 
 setup_local_ai()
 
-d = 384 # Dimensão dos vetores do modelo
+d = 384
 
-# --- Funções de Persistência e Processamento de Dados ---
+# --- 3. Sistema de Categorização Inteligente ---
+class IntelligentCategorizer:
+    def __init__(self):
+        self.categories = {}
+        self.category_embeddings = {}
+        self.load_categories()
+    
+    def load_categories(self):
+        """Carrega categorias salvas ou cria as iniciais."""
+        if os.path.exists(CATEGORIES_PATH):
+            try:
+                with open(CATEGORIES_PATH, 'rb') as f:
+                    data = pickle.load(f)
+                    self.categories = data.get('categories', {})
+                    self.category_embeddings = data.get('embeddings', {})
+                print(f"📂 {len(self.categories)} categorias carregadas.")
+            except Exception as e:
+                print(f"⚠️ Erro ao carregar categorias: {e}")
+                self._create_initial_categories()
+        else:
+            self._create_initial_categories()
+    
+    def _create_initial_categories(self):
+        """Cria categorias iniciais baseadas em análise semântica."""
+        initial_categories = {
+            "pessoal": {
+                "keywords": ["família", "amigo", "casa", "vida", "pessoa", "relacionamento", "saúde"],
+                "color": "#8b5cf6",
+                "description": "Vida pessoal e relacionamentos"
+            },
+            "trabalho": {
+                "keywords": ["trabalho", "emprego", "projeto", "reunião", "empresa", "carreira", "negócio"],
+                "color": "#3b82f6", 
+                "description": "Assuntos profissionais"
+            },
+            "conhecimento": {
+                "keywords": ["estudar", "aprender", "livro", "curso", "técnico", "conhecimento", "skill"],
+                "color": "#10b981",
+                "description": "Aprendizado e conhecimento"
+            },
+            "finanças": {
+                "keywords": ["dinheiro", "conta", "banco", "investimento", "economia", "comprar", "pagar"],
+                "color": "#f59e0b",
+                "description": "Questões financeiras"
+            },
+            "tecnologia": {
+                "keywords": ["código", "programa", "software", "app", "tecnologia", "computador", "internet"],
+                "color": "#ef4444",
+                "description": "Tecnologia e programação"
+            },
+            "criatividade": {
+                "keywords": ["arte", "música", "criativo", "design", "pintura", "desenho", "fotografia"],
+                "color": "#f97316",
+                "description": "Atividades criativas"
+            }
+        }
+        
+        self.categories = initial_categories
+        
+        for cat_name, cat_data in self.categories.items():
+            keywords_text = " ".join(cat_data["keywords"])
+            embedding = model.encode([keywords_text])[0]
+            self.category_embeddings[cat_name] = embedding
+        
+        self.save_categories()
+        print("🎯 Categorias iniciais criadas.")
+    
+    def save_categories(self):
+        """Salva categorias no disco."""
+        try:
+            data = {
+                'categories': self.categories,
+                'embeddings': self.category_embeddings
+            }
+            with open(CATEGORIES_PATH, 'wb') as f:
+                pickle.dump(data, f)
+        except Exception as e:
+            print(f"❌ Erro ao salvar categorias: {e}")
+    
+    def categorize_memory(self, text):
+        """Categoriza uma memória usando análise melhorada."""
+        text_lower = text.lower()
+        
+        category_scores = {}
+        
+        for cat_name, cat_data in self.categories.items():
+            score = 0.0
+            keywords = cat_data.get("keywords", [])
+            
+            for keyword in keywords:
+                if keyword in text_lower:
+                    score += 2.0
+                    
+            related_words = {
+                "pessoal": ["amigo", "amiga", "família", "pai", "mãe", "irmão", "irmã", "namorado", "namorada", "esposo", "esposa", "filho", "filha", "primo", "prima", "tio", "tia", "avô", "avó", "friend", "brother", "sister"],
+                "trabalho": ["trabalho", "emprego", "chefe", "colega", "projeto", "reunião", "empresa", "job", "work", "office", "meeting"],
+                "conhecimento": ["estudar", "aprender", "livro", "curso", "universidade", "escola", "prova", "estudo", "learn", "study", "book"],
+                "tecnologia": ["programar", "código", "software", "app", "python", "javascript", "html", "css", "computer", "tech"],
+                "finanças": ["dinheiro", "banco", "conta", "pagar", "comprar", "vender", "investir", "money", "bank"],
+                "criatividade": ["desenhar", "pintar", "música", "arte", "design", "criar", "art", "music", "create"]
+            }
+            
+            if cat_name in related_words:
+                for related in related_words[cat_name]:
+                    if related in text_lower:
+                        score += 1.5
+            
+            category_scores[cat_name] = score
+        
+        best_category = max(category_scores.items(), key=lambda x: x[1])
+        
+        if best_category[1] > 0.5:
+            return best_category[0], min(0.95, best_category[1] / 3.0)
+        
+        memory_embedding = model.encode([text])[0]
+        best_score = 0.0
+        best_cat = "geral"
+        
+        for cat_name, cat_embedding in self.category_embeddings.items():
+            similarity = np.dot(memory_embedding, cat_embedding) / (
+                np.linalg.norm(memory_embedding) * np.linalg.norm(cat_embedding)
+            )
+            
+            if similarity > best_score and similarity > 0.25:
+                best_score = similarity
+                best_cat = cat_name
+        
+        return best_cat if best_score > 0.25 else "geral", best_score
+    
+    def _generate_color(self):
+        """Gera cor aleatória para nova categoria."""
+        colors = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#f97316", "#6366f1", "#14b8a6", "#f472b6", "#84cc16"]
+        used_colors = [cat["color"] for cat in self.categories.values()]
+        available = [c for c in colors if c not in used_colors]
+        return available[0] if available else f"#{secrets.token_hex(3)}"
 
+categorizer = IntelligentCategorizer()
+
+# --- 4. Sistema de Persistência Melhorado ---
 def save_data(index, storage):
     print("💾 Salvando dados no disco...")
     try:
@@ -338,6 +467,7 @@ def load_data():
 
 index, note_storage = load_data()
 
+# --- 5. Sistema de Análise e Conexões Melhorado ---
 def calculate_text_similarity(text1, text2):
     try:
         def preprocess_text(text):
@@ -353,7 +483,7 @@ def calculate_text_similarity(text1, text2):
         return 0.0
 
 def find_memory_connections(note_storage, threshold=0.25):
-    """Encontra conexões entre memórias baseadas em similaridade semântica E contextual"""
+    """Encontra conexões entre memórias com análise de categorias."""
     connections = []
     note_ids = list(note_storage.keys())
     
@@ -361,53 +491,25 @@ def find_memory_connections(note_storage, threshold=0.25):
     
     for i, id1 in enumerate(note_ids):
         for id2 in note_ids[i+1:]:
-            text1 = note_storage[id1]
-            text2 = note_storage[id2]
+            memory1 = note_storage[id1]
+            memory2 = note_storage[id2]
             
-            # Análise de domínio/categoria
-            def get_content_category(text):
-                text_lower = text.lower()
-                categories = {
-                    'senhas': ['senha', 'password', 'login', 'acesso', 'email', 'banco'],
-                    'pets': ['gato', 'gata', 'cachorro', 'pet', 'animal', 'naomi'],
-                    'trabalho': ['trabalho', 'empresa', 'projeto', 'reunião'],
-                    'pessoal': ['pessoal', 'família', 'casa', 'amigo'],
-                    'finanças': ['dinheiro', 'banco', 'conta', 'cartão', 'pagar']
-                }
-                
-                category_scores = {}
-                
-                for category, keywords in categories.items():
-                    matches = len([w for w in keywords if w in text_lower])
-                    # Evita divisão por zero se a lista de keywords for vazia
-                    if len(keywords) > 0:
-                        category_scores[category] = matches / len(keywords)
-                    else:
-                        category_scores[category] = 0
-                
-                # Retorna a categoria com maior score, ou 'geral' se todos forem 0
-                if all(score == 0 for score in category_scores.values()):
-                    return 'geral', 0
-                
-                return max(category_scores.items(), key=lambda x: x[1])
+            text1 = memory1.get('content', memory1) if isinstance(memory1, dict) else memory1
+            text2 = memory2.get('content', memory2) if isinstance(memory2, dict) else memory2
             
-            category1, score1 = get_content_category(text1)
-            category2, score2 = get_content_category(text2)
+            cat1, score1 = categorizer.categorize_memory(text1)
+            cat2, score2 = categorizer.categorize_memory(text2)
             
-            # Se são categorias diferentes com scores altos, não conecta
-            if category1 != category2 and score1 > 0.3 and score2 > 0.3:
-                continue
+            category_penalty = 0.2 if cat1 != cat2 and score1 > 0.4 and score2 > 0.4 else 0
+            category_bonus = 0.3 if cat1 == cat2 and score1 > 0.3 and score2 > 0.3 else 0
             
-            # Calcula similaridade usando embeddings do modelo
             embedding1 = model.encode([text1])
             embedding2 = model.encode([text2])
             
-            # Similaridade do cosseno entre embeddings
             similarity = np.dot(embedding1[0], embedding2[0]) / (
                 np.linalg.norm(embedding1[0]) * np.linalg.norm(embedding2[0])
             )
             
-            # Análise de palavras-chave em comum
             words1 = set(re.findall(r'\b\w{4,}\b', text1.lower()))
             words2 = set(re.findall(r'\b\w{4,}\b', text2.lower()))
             common_words = words1.intersection(words2)
@@ -415,18 +517,14 @@ def find_memory_connections(note_storage, threshold=0.25):
             significant_common = common_words - stop_words
             word_similarity = len(significant_common) / max(len(words1.union(words2)), 1)
             
-            # TF-IDF similarity
             tfidf_similarity = calculate_text_similarity(text1, text2)
             
-            # Bônus se mesma categoria
-            category_bonus = 0.2 if category1 == category2 and score1 > 0.2 and score2 > 0.2 else 0
-            
-            # Combina métricas
             combined_similarity = (
                 similarity * 0.4 + 
-                tfidf_similarity * 0.3 + 
-                word_similarity * 0.3 + 
-                category_bonus
+                tfidf_similarity * 0.25 + 
+                word_similarity * 0.25 + 
+                category_bonus - 
+                category_penalty
             )
             
             if combined_similarity > threshold:
@@ -435,35 +533,108 @@ def find_memory_connections(note_storage, threshold=0.25):
                     'id2': id2,
                     'similarity': float(combined_similarity),
                     'content1': text1,
-                    'content2': text2
+                    'content2': text2,
+                    'category1': cat1,
+                    'category2': cat2
                 })
     
     print(f"\n🎯 RESULTADO: {len(connections)} conexões encontradas.")
     return connections
 
 def generate_ai_response(query, relevant_memories):
-    if not AI_AVAILABLE or not relevant_memories:
-        return None
+    """Gera resposta melhorada da IA com debug."""
+    if not AI_AVAILABLE:
+        return "IA não está disponível no momento."
+    
+    if not relevant_memories:
+        return f"Não encontrei memórias específicas sobre '{query}'. Pode tentar reformular a pergunta?"
+    
     try:
-        context = " | ".join(relevant_memories[:3])
-        prompt = f"Contexto: {context}\nPergunta: {query}\nResposta útil:"
-        inputs = ai_tokenizer.encode(prompt, return_tensors='pt', max_length=300, truncation=True)
-        outputs = ai_model.generate(
-            inputs, max_new_tokens=100, temperature=0.7, do_sample=True,
-            pad_token_id=ai_tokenizer.eos_token_id, no_repeat_ngram_size=3
-        )
+        print(f"🤖 Gerando resposta para: '{query}'")
+        print(f"📚 Memórias relevantes: {len(relevant_memories)}")
+        
+        context_parts = []
+        for i, memory in enumerate(relevant_memories[:3]):
+            content = memory.get('content', memory) if isinstance(memory, dict) else memory
+            context_parts.append(f"Memória {i+1}: {content}")
+        
+        context = "\n".join(context_parts)
+        
+        prompt = f"""Contexto das minhas memórias:
+{context}
+
+Pergunta: {query}
+
+Resposta direta e útil (baseada apenas nas memórias acima):"""
+        
+        print(f"🔍 Prompt gerado: {prompt[:100]}...")
+        
+        inputs = ai_tokenizer.encode(prompt, return_tensors='pt', max_length=400, truncation=True)
+        
+        print(f"🔤 Tokens de entrada: {inputs.shape[1]}")
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            outputs = ai_model.generate(
+                inputs, 
+                max_new_tokens=80,
+                temperature=0.7,
+                do_sample=True,
+                top_p=0.85,
+                top_k=40,
+                pad_token_id=ai_tokenizer.eos_token_id,
+                no_repeat_ngram_size=2,
+                repetition_penalty=1.1,
+                early_stopping=True
+            )
+        
         response = ai_tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True).strip()
-        return response if len(response) > 10 else f"Baseado nas suas memórias, encontrei informações sobre: {', '.join([mem[:50] + '...' for mem in relevant_memories[:2]])}."
+        
+        print(f"🎯 Resposta bruta: '{response}'")
+        
+        response = response.replace(prompt, "").strip()
+        response = re.sub(r'Resposta[^:]*:\s*', '', response, flags=re.IGNORECASE)
+        response = re.sub(r'\n+', ' ', response)
+        response = response.strip()
+        
+        print(f"✨ Resposta limpa: '{response}'")
+        
+        if len(response) < 10:
+            print("⚠️ Resposta muito curta, usando fallback")
+            response = ""
+        
+        if not response or len(set(response.split())) < 3:
+            print("⚠️ Resposta inadequada, gerando fallback inteligente")
+            
+            memory_keywords = []
+            for memory in relevant_memories[:2]:
+                content = memory.get('content', memory) if isinstance(memory, dict) else memory
+                words = re.findall(r'\b\w{4,}\b', content.lower())
+                memory_keywords.extend(words[:3])
+            
+            if memory_keywords:
+                unique_keywords = list(dict.fromkeys(memory_keywords))[:5]
+                keywords_str = ", ".join(unique_keywords)
+                response = f"Baseado nas suas memórias sobre {keywords_str}, posso elaborar mais detalhes se especificar o que precisa saber."
+            else:
+                response = f"Encontrei informações sobre '{query}' nas suas memórias. Que aspecto específico gostaria de explorar?"
+        
+        print(f"🎉 Resposta final: '{response}'")
+        return response
+        
     except Exception as e:
-        print(f"💥 Erro ao gerar resposta da IA: {e}")
-        return f"Encontrei {len(relevant_memories)} memória(s) relacionada(s). Veja as fontes abaixo."
+        print(f"💥 Erro detalhado na IA: {e}")
+        print(f"🔍 Tipo do erro: {type(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return f"Encontrei {len(relevant_memories)} memória(s) relacionada(s) a '{query}'. A IA teve dificuldades técnicas, mas você pode ver as memórias nas fontes abaixo."
 
-# --- 2. Rotas de Autenticação ---
-
+# --- 6. Rotas de Autenticação ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        # Correção: usar request.form para formulários HTML padrão
         password = request.form.get('password', '').strip()
         
         if verify_password(password, user_config):
@@ -476,7 +647,6 @@ def login():
             print(f"❌ Tentativa de login inválida às {datetime.now().strftime('%H:%M:%S')}")
             flash('Senha incorreta!')
             
-    # Renderiza template de login
     return render_template('login_template.html')
 
 @app.route('/logout')
@@ -486,8 +656,7 @@ def logout():
     print(f"ℹ️ Logout realizado às {datetime.now().strftime('%H:%M:%S')}")
     return redirect(url_for('login'))
 
-# --- 3. Rotas Protegidas da API ---
-
+# --- 7. Rotas da API Melhoradas ---
 @app.route('/')
 @require_auth
 def home():
@@ -496,8 +665,44 @@ def home():
 @app.route('/get-all-notes', methods=['GET'])
 @require_auth
 def get_all_notes():
-    notes_list = [{"id": note_id, "content": content} for note_id, content in note_storage.items()]
+    """Retorna todas as notas com metadados melhorados."""
+    notes_list = []
+    for note_id, note_data in note_storage.items():
+        if isinstance(note_data, dict):
+            content = note_data.get('content', '')
+            category, score = categorizer.categorize_memory(content)
+            notes_list.append({
+                "id": note_id,
+                "content": content,
+                "category": category,
+                "category_score": float(score),
+                "category_color": categorizer.categories.get(category, {}).get('color', '#64748b'),
+                "created_at": note_data.get('created_at', datetime.now().isoformat()),
+                "updated_at": note_data.get('updated_at', datetime.now().isoformat())
+            })
+        else:
+            category, score = categorizer.categorize_memory(note_data)
+            notes_list.append({
+                "id": note_id,
+                "content": note_data,
+                "category": category,
+                "category_score": float(score),
+                "category_color": categorizer.categories.get(category, {}).get('color', '#64748b'),
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            })
+    
+    notes_list.sort(key=lambda x: x['created_at'], reverse=True)
     return jsonify(notes_list)
+
+@app.route('/get-categories', methods=['GET'])
+@require_auth
+def get_categories():
+    """Retorna todas as categorias disponíveis."""
+    return jsonify({
+        "status": "success",
+        "categories": categorizer.categories
+    })
 
 @app.route('/get-connections', methods=['GET'])
 @require_auth
@@ -521,47 +726,161 @@ def add_note():
     note_vector = model.encode([note_text])
     index.add(note_vector)
     current_id = index.ntotal - 1
-    note_storage[current_id] = note_text
+    
+    category, score = categorizer.categorize_memory(note_text)
+    
+    note_data = {
+        'content': note_text,
+        'created_at': datetime.now().isoformat(),
+        'updated_at': datetime.now().isoformat(),
+        'category': category,
+        'category_score': float(score),
+        'id': str(uuid.uuid4())
+    }
+    
+    note_storage[current_id] = note_data
     save_data(index, note_storage)
     
-    print(f"➕ Nota adicionada (ID: {current_id}): {note_text[:50]}...")
-    return jsonify({"status": "success", "id": current_id, "content": note_text})
+    print(f"➕ Nota adicionada (ID: {current_id}, Categoria: {category}): {note_text[:50]}...")
+    
+    return jsonify({
+        "status": "success", 
+        "id": current_id, 
+        "content": note_text,
+        "category": category,
+        "category_color": categorizer.categories.get(category, {}).get('color', '#64748b'),
+        "category_score": float(score),
+        "created_at": note_data['created_at']
+    })
+
+@app.route('/edit-note', methods=['POST'])
+@require_auth
+def edit_note():
+    """Nova funcionalidade: editar memória existente."""
+    global index, note_storage
+    data = request.json
+    note_id = data.get('id')
+    new_content = data.get('content', '').strip()
+    
+    if not new_content or note_id is None:
+        return jsonify({"status": "error", "message": "Dados inválidos."}), 400
+    
+    try:
+        note_id = int(note_id)
+        if note_id not in note_storage:
+            return jsonify({"status": "error", "message": "Nota não encontrada."}), 404
+        
+        category, score = categorizer.categorize_memory(new_content)
+        
+        if isinstance(note_storage[note_id], dict):
+            note_storage[note_id].update({
+                'content': new_content,
+                'updated_at': datetime.now().isoformat(),
+                'category': category,
+                'category_score': float(score)
+            })
+        else:
+            note_storage[note_id] = {
+                'content': new_content,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat(),
+                'category': category,
+                'category_score': float(score),
+                'id': str(uuid.uuid4())
+            }
+        
+        save_data(index, note_storage)
+        
+        print(f"✏️ Nota editada (ID: {note_id}): {new_content[:50]}...")
+        
+        return jsonify({
+            "status": "success",
+            "id": note_id,
+            "content": new_content,
+            "category": category,
+            "category_color": categorizer.categories.get(category, {}).get('color', '#64748b'),
+            "updated_at": note_storage[note_id]['updated_at']
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Erro ao editar: {str(e)}"}), 500
+
+@app.route('/delete-note', methods=['POST'])
+@require_auth
+def delete_note():
+    """Nova funcionalidade: deletar memória."""
+    global index, note_storage
+    data = request.json
+    note_id = data.get('id')
+    
+    if note_id is None:
+        return jsonify({"status": "error", "message": "ID não fornecido."}), 400
+    
+    try:
+        note_id = int(note_id)
+        if note_id not in note_storage:
+            return jsonify({"status": "error", "message": "Nota não encontrada."}), 404
+        
+        del note_storage[note_id]
+        save_data(index, note_storage)
+        
+        print(f"🗑️ Nota deletada (ID: {note_id})")
+        
+        return jsonify({"status": "success", "message": "Nota deletada com sucesso."})
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Erro ao deletar: {str(e)}"}), 500
 
 @app.route('/ask', methods=['POST'])
 @require_auth
 def ask():
     data = request.json
     query_text = data.get('query')
+    category_filter = data.get('category')
+    sort_by = data.get('sort', 'relevance')
+    
     top_k = min(20, index.ntotal)
 
     if not query_text or index.ntotal == 0:
         return jsonify({"results": [], "scores": []})
 
-    print(f"\n🔍 BUSCA INICIADA: '{query_text}'")
-    query_words = set(re.findall(r'\b\w{3,}\b', query_text.lower()))
+    print(f"\n🔍 BUSCA INICIADA: '{query_text}' (Filtro: {category_filter}, Ordem: {sort_by})")
     
+    query_words = set(re.findall(r'\b\w{3,}\b', query_text.lower()))
     query_vector = model.encode([query_text])
     distances, indices = index.search(query_vector, top_k)
 
     candidates = []
     for i, distance in zip(indices[0], distances[0]):
         if i != -1 and i in note_storage:
-            content = note_storage[i]
-            content_words = set(re.findall(r'\b\w{3,}\b', content.lower()))
+            note_data = note_storage[i]
+            content = note_data.get('content', note_data) if isinstance(note_data, dict) else note_data
             
+            if category_filter and category_filter != 'all':
+                note_category = note_data.get('category', 'geral') if isinstance(note_data, dict) else categorizer.categorize_memory(content)[0]
+                if note_category != category_filter:
+                    continue
+            
+            content_words = set(re.findall(r'\b\w{3,}\b', content.lower()))
             exact_matches = query_words.intersection(content_words)
             context_overlap = len(exact_matches) / len(query_words) if query_words else 0
             embedding_score = max(0, 1 - (distance / 2.0))
             combined_score = (embedding_score * 0.6) + (context_overlap * 0.4)
             
-            candidates.append({
+            candidate_data = {
                 'content': content,
                 'combined_score': combined_score,
                 'context_overlap': context_overlap,
-                'embedding_score': embedding_score
-            })
+                'embedding_score': embedding_score,
+                'id': i
+            }
+            
+            if isinstance(note_data, dict):
+                candidate_data['created_at'] = note_data.get('created_at', '')
+                candidate_data['category'] = note_data.get('category', 'geral')
+            
+            candidates.append(candidate_data)
 
-    # Filtros para resultados mais relevantes
     filtered_results = []
     for candidate in candidates:
         accept = False
@@ -575,14 +894,27 @@ def ask():
         if accept:
             filtered_results.append(candidate)
 
-    filtered_results.sort(key=lambda x: x['combined_score'], reverse=True)
+    if sort_by == 'date':
+        filtered_results.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+    elif sort_by == 'alphabetical':
+        filtered_results.sort(key=lambda x: x['content'].lower())
+    else:
+        filtered_results.sort(key=lambda x: x['combined_score'], reverse=True)
+    
     final_results = filtered_results[:5]
     
     results = [r['content'] for r in final_results]
     scores = [r['combined_score'] for r in final_results]
+    categories = [r.get('category', 'geral') for r in final_results]
     
     print(f"📊 RESULTADO: {len(results)} memórias relevantes encontradas.")
-    return jsonify({"results": results, "scores": scores})
+    return jsonify({
+        "results": results, 
+        "scores": scores, 
+        "categories": categories,
+        "query": query_text,
+        "total_matches": len(filtered_results)
+    })
 
 @app.route('/ai-status', methods=['GET'])
 @require_auth
@@ -597,118 +929,163 @@ def ai_status():
 def ask_ai():
     data = request.json
     query_text = data.get('query')
-    if not query_text: return jsonify({"status": "error", "message": "Query vazia"}), 400
-    if not AI_AVAILABLE: return jsonify({"status": "error", "message": "IA indisponível"}), 503
+    if not query_text: 
+        return jsonify({"status": "error", "message": "Query vazia"}), 400
+    if not AI_AVAILABLE: 
+        return jsonify({"status": "error", "message": "IA indisponível"}), 503
     
     top_k = min(10, index.ntotal)
     query_vector = model.encode([query_text])
     distances, indices = index.search(query_vector, top_k)
 
-    candidates = [{'content': note_storage[i], 'score': float(1 - d/2)} 
-                  for i, d in zip(indices[0], distances[0]) 
-                  if i in note_storage and (1 - d/2) > 0.3]
+    candidates = []
+    for i, d in zip(indices[0], distances[0]):
+        if i in note_storage and (1 - d/2) > 0.3:
+            note_data = note_storage[i]
+            content = note_data.get('content', note_data) if isinstance(note_data, dict) else note_data
+            score = float(1 - d/2)
+            
+            candidate = {'content': content, 'score': score}
+            if isinstance(note_data, dict):
+                candidate['category'] = note_data.get('category', 'geral')
+            
+            candidates.append(candidate)
     
     candidates.sort(key=lambda x: x['score'], reverse=True)
-    relevant_memories = [c['content'] for c in candidates[:3]]
+    relevant_memories = candidates[:3]
     
     if relevant_memories:
         ai_response = generate_ai_response(query_text, relevant_memories)
     else:
-        ai_response = "Não encontrei memórias relevantes para responder."
+        ai_response = "Não encontrei memórias relevantes para responder à sua pergunta."
         
     return jsonify({
-        "status": "success", "query": query_text, "ai_response": ai_response,
+        "status": "success", 
+        "query": query_text, 
+        "ai_response": ai_response,
         "sources": candidates[:5]
     })
 
-# --- 4. Execução do Servidor ---
-if __name__ == '__main__':
-    # Criar template de login
-    with open("login_template.html", "w", encoding="utf-8") as f:
-        f.write('''
-    <!DOCTYPE html>
-    <html lang="pt-BR">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>TwoMind - Login</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Inter', sans-serif; }
-            .gradient-bg {
-                background: radial-gradient(ellipse at center, #0f172a 0%, #020617 100%);
+@app.route('/stats', methods=['GET'])
+@require_auth
+def get_stats():
+    """Nova rota: estatísticas do sistema."""
+    try:
+        total_memories = len(note_storage)
+        categories_count = {}
+        
+        for note_data in note_storage.values():
+            if isinstance(note_data, dict):
+                category = note_data.get('category', 'geral')
+            else:
+                category, _ = categorizer.categorize_memory(note_data)
+            
+            categories_count[category] = categories_count.get(category, 0) + 1
+        
+        connections = find_memory_connections(note_storage, threshold=0.25)
+        avg_connections = len(connections) / max(total_memories, 1)
+        
+        return jsonify({
+            "status": "success",
+            "stats": {
+                "total_memories": total_memories,
+                "total_categories": len(categorizer.categories),
+                "categories_distribution": categories_count,
+                "total_connections": len(connections),
+                "avg_connections_per_memory": round(avg_connections, 2),
+                "ai_status": "Ativo" if AI_AVAILABLE else "Inativo"
             }
-        </style>
-    </head>
-    <body class="gradient-bg min-h-screen flex items-center justify-center text-white">
-        <div class="bg-slate-800/50 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-md border border-slate-700/50">
-            <div class="text-center mb-8">
-                <h1 class="text-3xl font-bold text-cyan-400 mb-2">🧠 TwoMind</h1>
-                <p class="text-slate-400">Acesso seguro às suas memórias</p>
-            </div>
-            
-            {% with messages = get_flashed_messages() %}
-                {% if messages %}
-                    <div class="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-xl">
-                        {% for message in messages %}
-                            <p class="text-red-300 text-sm text-center font-semibold">{{ message }}</p>
-                        {% endfor %}
-                    </div>
-                {% endif %}
-            {% endwith %}
-            
-            <form method="post" action="/login" class="space-y-6">
-                <div>
-                    <label for="password" class="block text-sm font-medium text-slate-300 mb-2">
-                        Senha de acesso:
-                    </label>
-                    <input type="password" id="password" name="password" required
-                           class="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-                           placeholder="Digite sua senha">
-                </div>
-                
-                <button type="submit" 
-                        class="w-full bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg">
-                    Entrar
-                </button>
-            </form>
-            
-            <div class="mt-6 text-center">
-                <p class="text-xs text-slate-500">
-                    🔒 Conexão protegida via Cloudflare.<br>
-                    Sessão válida por 24 horas.
-                </p>
-            </div>
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- 8. Execução do Servidor ---
+if __name__ == '__main__':
+    # Criar template de login melhorado
+    with open("login_template.html", "w", encoding="utf-8") as f:
+        f.write('''<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TwoMind - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-bg {
+            background: radial-gradient(ellipse at center, #0f172a 0%, #020617 100%);
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen flex items-center justify-center text-white">
+    <div class="bg-slate-800/50 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-md border border-slate-700/50">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-cyan-400 mb-2">🧠 TwoMind</h1>
+            <p class="text-slate-400">Acesso seguro às suas memórias</p>
         </div>
-    </body>
-    </html>
-    ''')
+        
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-xl">
+                    {% for message in messages %}
+                        <p class="text-red-300 text-sm text-center font-semibold">{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
+        <form method="post" action="/login" class="space-y-6">
+            <div>
+                <label for="password" class="block text-sm font-medium text-slate-300 mb-2">
+                    Senha de acesso:
+                </label>
+                <input type="password" id="password" name="password" required
+                       class="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                       placeholder="Digite sua senha">
+            </div>
+            
+            <button type="submit" 
+                    class="w-full bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg">
+                Entrar
+            </button>
+        </form>
+        
+        <div class="mt-6 text-center">
+            <p class="text-xs text-slate-500">
+                🔒 Conexão protegida via Cloudflare.<br>
+                Sessão válida por 24 horas.
+            </p>
+        </div>
+    </div>
+</body>
+</html>''')
 
     print(f"\n{'='*60}")
-    print("🧠 TwoMind - SERVIDOR GLOBAL")
+    print("🧠 TwoMind - SERVIDOR MELHORADO")
     print("="*60)
-    print(f"🔍 Memórias carregadas: {len(note_storage)}")
+    print(f"📚 Memórias carregadas: {len(note_storage)}")
+    print(f"🎯 Categorias disponíveis: {len(categorizer.categories)}")
     print(f"🤖 IA disponível: {'Sim' if AI_AVAILABLE else 'Não'}")
-    print(f"🔒 Autenticação: Habilitada")
+    print(f"🔐 Autenticação: Habilitada")
     print(f"🌐 Túnel Cloudflare: Iniciando...")
     
     # Inicia o túnel Cloudflare em background
     tunnel_thread = start_cloudflare_tunnel()
     
-    host = '127.0.0.1'  # Apenas localhost para segurança
+    host = '0.0.0.0'  # MUDANÇA IMPORTANTE: aceita conexões externas
     port = 5000
     
-    print(f"🏠 Acesso local: http://{host}:{port}")
+    print(f"🏠 Acesso local: http://localhost:{port}")
     print(f"⏳ Aguardando túnel Cloudflare...")
     print("="*60)
     
     try:
-        app.run(host=host, port=port, debug=False, threaded=True)
+        # Adicionado processes=1 para evitar conflitos
+        app.run(host=host, port=port, debug=False, threaded=True, processes=1)
     except KeyboardInterrupt:
         print("\n🛑 Servidor interrompido pelo usuário")
     except Exception as e:
         print(f"❌ Erro no servidor: {e}")
     finally:
         print("🔧 Limpando recursos...")
-        # O processo do cloudflared será terminado automaticamente

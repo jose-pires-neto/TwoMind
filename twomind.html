@@ -3,190 +3,567 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Segundo Cérebro - Visualização Gráfica</title>
+    <title>Segundo Cérebro - Visualização Gráfica Avançada</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
             overflow: hidden;
         }
+        
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --accent-primary: #8b5cf6;
+            --accent-secondary: #a855f7;
+            --border-primary: #475569;
+            --border-secondary: #334155;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+        }
+        
+        /* Sistema de notificações Toast */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            min-width: 300px;
+            padding: 16px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            transform: translateX(100%);
+            transition: transform 0.3s ease-in-out;
+        }
+        
+        .toast.show {
+            transform: translateX(0);
+        }
+        
+        .toast.success { background: var(--success); }
+        .toast.warning { background: var(--warning); }
+        .toast.error { background: var(--error); }
+        .toast.info { background: var(--accent-primary); }
+        
+        /* Sistema de camadas adaptativo */
+        .layer {
+            position: absolute;
+            border-radius: 50%;
+            border: 2px solid rgba(139, 92, 246, 0.2);
+            pointer-events: none;
+        }
+        
+        .layer.layer-1 { 
+            width: 200px; height: 200px; 
+            border-color: rgba(139, 92, 246, 0.3);
+        }
+        .layer.layer-2 { 
+            width: 400px; height: 400px; 
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+        .layer.layer-3 { 
+            width: 600px; height: 600px; 
+            border-color: rgba(16, 185, 129, 0.2);
+        }
+        .layer.layer-4 { 
+            width: 800px; height: 800px; 
+            border-color: rgba(245, 158, 11, 0.2);
+        }
+        
         #graph-container {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: radial-gradient(ellipse at center, #0f172a 0%, #020617 100%);
+            background: var(--bg-primary);
         }
+        
         .node circle {
             cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+            transition: all 0.3s ease;
+            stroke-width: 1.5;
         }
+        
         .node:hover circle {
             transform: scale(1.2);
-            filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4));
+            filter: brightness(1.3);
         }
+        
+        .node-memory circle {
+            stroke-width: 2;
+        }
+        
+        .node-query circle {
+            fill: var(--accent-primary);
+            stroke: var(--accent-secondary);
+            stroke-width: 3;
+            filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.6));
+        }
+        
+        .node text {
+            fill: var(--text-muted);
+            font-size: 10px;
+            font-weight: 500;
+            pointer-events: none;
+        }
+        
         .link {
-            stroke: #334155;
-            stroke-opacity: 0.4;
+            stroke-opacity: 0.6;
+            stroke-width: 1;
             transition: all 0.3s ease;
         }
+        
         .link.highlighted {
-            stroke: #06b6d4;
-            stroke-opacity: 0.8;
+            stroke: var(--accent-primary);
+            stroke-opacity: 0.9;
             stroke-width: 3;
         }
-        .modal {
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            backdrop-filter: blur(20px);
+        
+        .link.category-connection {
+            stroke-dasharray: 5,5;
+            animation: dash 1s linear infinite;
         }
-        .memory-modal {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
-            border: 1px solid rgba(100, 116, 139, 0.2);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        
+        @keyframes dash {
+            to { stroke-dashoffset: -10; }
         }
-        .spinner {
-            border: 4px solid rgba(6, 182, 212, 0.2);
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-secondary);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        
+        .modal-overlay {
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(6px);
+        }
+        
+        .modal-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-primary);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        
+        .input-field {
+            background: var(--bg-primary);
+            border: 2px solid var(--border-secondary);
+            color: var(--text-primary);
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+        
+        .input-field::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: var(--text-primary);
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            border: none;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-secondary:hover {
+            background: var(--border-primary);
+            color: var(--text-primary);
+            transform: translateY(-1px);
+        }
+        
+        .btn-danger {
+            background: var(--error);
+            color: white;
+            border-radius: 8px;
+            font-weight: 500;
+            border: none;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+            transform: translateY(-1px);
+        }
+        
+        .fab-button {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: var(--text-primary);
             border-radius: 50%;
-            border-top: 4px solid #06b6d4;
-            width: 32px;
-            height: 32px;
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+            transition: all 0.3s ease;
+            border: none;
+        }
+        
+        .fab-button:hover {
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 12px 30px rgba(139, 92, 246, 0.5);
+        }
+        
+        .spinner {
+            border: 3px solid var(--border-secondary);
+            border-radius: 50%;
+            border-top: 3px solid var(--accent-primary);
             animation: spin 1s linear infinite;
         }
+        
         @keyframes spin { 
             0% { transform: rotate(0deg); } 
             100% { transform: rotate(360deg); } 
         }
-        @keyframes pulse-glow {
-            0%, 100% { box-shadow: 0 0 20px rgba(6, 182, 212, 0.3); }
-            50% { box-shadow: 0 0 40px rgba(6, 182, 212, 0.6); }
+        
+        .search-active circle {
+            animation: pulse 2s ease-in-out infinite;
         }
-        .search-active {
-            animation: pulse-glow 2s ease-in-out infinite;
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
         }
-        .glass-effect {
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(100, 116, 139, 0.1);
+        
+        .status-badge {
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+            border: 1px solid var(--border-secondary);
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .node-memory circle {
-            fill: #0891b2;
+        
+        .status-badge.active {
+            background: rgba(139, 92, 246, 0.2);
+            color: var(--accent-primary);
+            border-color: var(--accent-primary);
         }
-        .node-query circle {
-            fill: #a21caf;
-            stroke: #f0abfc;
-            stroke-width: 2;
+        
+        .category-filter {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 2px solid transparent;
+            margin: 4px;
         }
+        
+        .category-filter:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .category-filter.active {
+            border-color: currentColor;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+        
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .breadcrumb-item {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+        
+        .breadcrumb-item:hover {
+            color: var(--text-secondary);
+        }
+        
+        .breadcrumb-separator {
+            margin: 0 8px;
+            color: var(--border-primary);
+        }
+        
+        .memory-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-secondary);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 8px 0;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .memory-card:hover {
+            border-color: var(--accent-primary);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+        
+        .loading-text {
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+            text-align: center;
+        }
+        
         @media (max-width: 768px) {
             .fab-container {
                 bottom: 1rem;
                 right: 1rem;
             }
-            .main-title {
-                font-size: 1.25rem;
+            
+            .header-panel {
+                max-width: 90%;
+                font-size: 0.875rem;
             }
+            
+            .glass-panel {
+                backdrop-filter: blur(8px);
+            }
+        }
+        
+        /* Estados de erro melhorados */
+        .error-state {
+            color: var(--error);
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 14px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px 20px;
+        }
+        
+        .empty-state svg {
+            opacity: 0.5;
+            margin-bottom: 16px;
         }
     </style>
 </head>
-<body class="bg-slate-950 text-white">
+<body style="background: var(--bg-primary); color: var(--text-primary);">
 
     <div id="graph-container"></div>
     
-    <!-- Header Info -->
-    <div class="absolute top-4 left-4 text-slate-400 text-sm max-w-xs glass-effect rounded-lg p-3">
-        <h1 class="text-2xl font-bold text-cyan-400 main-title mb-1">Segundo Cérebro</h1>
-        <p class="text-xs">Toque em uma memória para expandir</p>
-        <p class="text-xs text-slate-500">Arraste para navegar • Scroll para zoom</p>
-        <div id="stats" class="text-xs mt-2 text-slate-500">
-            <span id="node-count">0 memórias</span>
+    <!-- Camadas de densidade adaptativa -->
+    <div id="density-layers"></div>
+    
+    <!-- Header melhorado com breadcrumbs -->
+    <div class="absolute top-4 left-4 glass-panel p-4 header-panel max-w-md">
+        <div class="flex items-center justify-between mb-2">
+            <h1 class="text-xl font-semibold text-white">Segundo Cérebro</h1>
+            <div id="connection-status" class="status-badge">Conectado</div>
+        </div>
+        
+        <!-- Breadcrumbs -->
+        <nav id="breadcrumbs" class="breadcrumb mb-3">
+            <span class="breadcrumb-item" onclick="resetView()">Início</span>
+        </nav>
+        
+        <!-- Stats melhoradas -->
+        <div id="stats" class="text-xs text-slate-500 space-y-1">
+            <div class="flex justify-between">
+                <span>Memórias:</span>
+                <span id="node-count">0</span>
+            </div>
+            <div class="flex justify-between">
+                <span>Categorias:</span>
+                <span id="category-count">0</span>
+            </div>
+            <div class="flex justify-between">
+                <span>Conexões:</span>
+                <span id="connection-count">0</span>
+            </div>
         </div>
     </div>
 
-    <!-- Controles de Navegação -->
+    <!-- Filtros de categoria -->
+    <div id="category-filters" class="absolute top-4 left-1/2 transform -translate-x-1/2 glass-panel p-3 max-w-4xl overflow-x-auto">
+        <div class="flex items-center space-x-2">
+            <span class="text-sm font-medium text-slate-400 whitespace-nowrap">Filtros:</span>
+            <div id="filter-buttons" class="flex">
+                <div class="category-filter active" data-category="all" style="background: rgba(139, 92, 246, 0.2); color: #8b5cf6;">
+                    Todas
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controles de navegação melhorados -->
     <div class="absolute top-4 right-4 flex flex-col space-y-2">
-        <button onclick="resetZoom()" class="glass-effect p-3 rounded-lg hover:bg-slate-700/50 transition-all duration-300" title="Centralizar">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>
+        <button onclick="resetZoom()" class="glass-panel p-3 hover:bg-slate-600/30 transition-all duration-200" title="Centralizar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>
         </button>
-        <button onclick="fitToView()" class="glass-effect p-3 rounded-lg hover:bg-slate-700/50 transition-all duration-300" title="Ver Todas">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        <button onclick="fitToView()" class="glass-panel p-3 hover:bg-slate-600/30 transition-all duration-200" title="Ver Todas">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+        <button onclick="toggleLayers()" class="glass-panel p-3 hover:bg-slate-600/30 transition-all duration-200" title="Alternar Camadas">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 2,7 12,12 22,7"/><polyline points="2,17 12,22 22,17"/><polyline points="2,12 12,17 22,12"/></svg>
+        </button>
+        <button onclick="toggleStats()" class="glass-panel p-3 hover:bg-slate-600/30 transition-all duration-200" title="Estatísticas">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         </button>
     </div>
 
-    <!-- FAB Menu -->
+    <!-- Controles de ordenação -->
+    <div class="absolute bottom-4 left-4 glass-panel p-3">
+        <div class="flex items-center space-x-2">
+            <span class="text-sm font-medium text-slate-400">Ordenar:</span>
+            <select id="sort-selector" class="input-field px-3 py-1 text-sm">
+                <option value="relevance">Relevância</option>
+                <option value="date">Data</option>
+                <option value="alphabetical">Alfabética</option>
+                <option value="category">Categoria</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- FAB Menu melhorado -->
     <div class="absolute bottom-8 right-8 fab-container">
         <div id="fab-menu" class="flex flex-col items-end space-y-3 mb-3 hidden">
-            <button onclick="openModal('addModal')" class="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-3 px-5 rounded-full shadow-xl flex items-center transition-all duration-300 hover:scale-105">
-                <span class="mr-2">Criar Memória</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <button onclick="openModal('addModal')" class="btn-primary px-4 py-3 flex items-center space-x-2 rounded-full shadow-lg">
+                <span class="text-sm font-medium">Nova Memória</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
             </button>
-            <button onclick="openModal('searchModal')" class="bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-semibold py-3 px-5 rounded-full shadow-xl flex items-center transition-all duration-300 hover:scale-105">
-                <span class="mr-2">Buscar</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <button onclick="openModal('searchModal')" class="btn-primary px-4 py-3 flex items-center space-x-2 rounded-full shadow-lg">
+                <span class="text-sm font-medium">Buscar</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </button>
-            <button onclick="clearSearch()" class="bg-slate-600 hover:bg-slate-500 text-white font-semibold py-3 px-5 rounded-full shadow-xl flex items-center transition-all duration-300 hover:scale-105">
-                <span class="mr-2">Limpar</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            <button onclick="clearSearch()" class="btn-secondary px-4 py-3 flex items-center space-x-2 rounded-full shadow-lg">
+                <span class="text-sm font-medium">Limpar</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
             </button>
         </div>
-        <button id="fab" class="w-16 h-16 bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 hover:scale-110">
-            <svg id="fab-icon-plus" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-            <svg id="fab-icon-close" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button id="fab" class="fab-button w-14 h-14 flex items-center justify-center">
+            <svg id="fab-icon-plus" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <svg id="fab-icon-close" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hidden"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
     </div>
 
-    <!-- Modal para Adicionar Memória -->
-    <div id="addModal" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('addModal', event)">
-        <div class="glass-effect p-8 rounded-3xl shadow-2xl w-full max-w-lg m-4">
-            <h2 class="text-2xl font-bold mb-6 text-cyan-400">Nova Memória</h2>
-            <textarea id="noteInput" placeholder="Digite sua memória aqui..." class="w-full h-32 bg-slate-900/50 rounded-xl p-4 text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 border border-slate-700/50 backdrop-blur"></textarea>
-            <button id="addNoteBtn" class="w-full mt-6 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg">
-                Salvar na Memória
-            </button>
+    <!-- Modal para Adicionar/Editar Memória -->
+    <div id="addModal" class="fixed inset-0 modal-overlay flex items-center justify-center hidden opacity-0 z-50 transition-opacity duration-300" onclick="closeModal('addModal', event)">
+        <div class="modal-panel p-6 w-full max-w-lg m-4">
+            <h2 id="add-modal-title" class="text-lg font-semibold mb-4 text-white">Nova Memória</h2>
+            <textarea id="noteInput" placeholder="Digite sua memória aqui..." class="input-field w-full h-32 p-3 text-sm resize-none"></textarea>
+            
+            <!-- Preview de categoria -->
+            <div id="category-preview" class="mt-3 p-3 rounded-lg border border-slate-600 hidden">
+                <div class="flex items-center space-x-2">
+                    <div id="category-color" class="w-3 h-3 rounded-full"></div>
+                    <span id="category-name" class="text-sm font-medium"></span>
+                    <span id="category-confidence" class="text-xs text-slate-400"></span>
+                </div>
+            </div>
+            
+            <div class="flex space-x-3 mt-4">
+                <button id="addNoteBtn" class="btn-primary flex-1 py-3 text-sm font-medium">
+                    Salvar Memória
+                </button>
+                <button id="cancelBtn" onclick="closeModal('addModal')" class="btn-secondary px-6 py-3 text-sm">
+                    Cancelar
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- Modal para Buscar -->
-    <div id="searchModal" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('searchModal', event)">
-        <div class="glass-effect p-8 rounded-3xl shadow-2xl w-full max-w-lg m-4">
-            <h2 class="text-2xl font-bold mb-6 text-fuchsia-400">Buscar Conexões</h2>
-            <input type="text" id="queryInput" placeholder="O que você está procurando?" class="w-full bg-slate-900/50 rounded-xl p-4 text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 border border-slate-700/50 backdrop-blur mb-4">
+    <div id="searchModal" class="fixed inset-0 modal-overlay flex items-center justify-center hidden opacity-0 z-50 transition-opacity duration-300" onclick="closeModal('searchModal', event)">
+        <div class="modal-panel p-6 w-full max-w-lg m-4">
+            <h2 class="text-lg font-semibold mb-4 text-white">Buscar Conexões</h2>
+            <input type="text" id="queryInput" placeholder="O que você está procurando?" class="input-field w-full p-3 text-sm mb-4">
+            
+            <!-- Filtros de busca -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-slate-400 mb-2">Filtrar por categoria:</label>
+                <select id="search-category-filter" class="input-field w-full p-2 text-sm">
+                    <option value="all">Todas as categorias</option>
+                </select>
+            </div>
             
             <div class="flex space-x-3">
-                <button id="askBtn" class="flex-1 bg-gradient-to-r from-fuchsia-600 to-fuchsia-500 hover:from-fuchsia-500 hover:to-fuchsia-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg">
+                <button id="askBtn" class="btn-primary flex-1 py-3 text-sm font-medium">
                     Buscar
                 </button>
-                <button id="askAiBtn" class="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold py-4 px-4 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg flex items-center" title="Buscar com IA (Ctrl+Enter)">
-                    <span class="text-xl">✨</span>
+                <button id="askAiBtn" class="btn-primary py-3 px-4 text-lg" title="Buscar com IA (Ctrl+Enter)">
+                    ✨
                 </button>
             </div>
             
-            <div id="aiStatus" class="mt-3 text-xs text-slate-500 text-center">
-                <span id="aiStatusText">Verificando IA...</span>
+            <div id="aiStatus" class="mt-3 text-center">
+                <span id="aiStatusText" class="status-badge">Verificando IA...</span>
             </div>
         </div>
     </div>
     
-    <!-- Modal para Visualizar Memória -->
-    <div id="memoryModal" class="modal fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('memoryModal', event)">
-        <div class="memory-modal rounded-3xl shadow-2xl w-full max-w-2xl m-4 max-h-[80vh] overflow-y-auto">
-            <div class="p-8">
-                <div class="flex items-start justify-between mb-6">
+    <!-- Modal para Visualizar/Editar Memória -->
+    <div id="memoryModal" class="fixed inset-0 modal-overlay flex items-center justify-center hidden opacity-0 z-50 transition-opacity duration-300" onclick="closeModal('memoryModal', event)">
+        <div class="modal-panel w-full max-w-2xl m-4 max-h-[80vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center space-x-3">
-                        <div class="w-3 h-3 bg-cyan-400 rounded-full animate-pulse"></div>
-                        <h3 class="text-xl font-semibold text-cyan-400">Memória</h3>
+                        <h3 class="text-lg font-semibold text-white">Memória</h3>
+                        <div id="memory-category-badge" class="category-filter text-xs"></div>
                     </div>
-                    <button onclick="closeModal('memoryModal')" class="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-700/50 rounded-lg">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
+                    <div class="flex items-center space-x-2">
+                        <button id="editMemoryBtn" onclick="editCurrentMemory()" class="btn-secondary px-4 py-2 text-sm">
+                            Editar
+                        </button>
+                        <button id="deleteMemoryBtn" onclick="deleteCurrentMemory()" class="btn-danger px-4 py-2 text-sm">
+                            Deletar
+                        </button>
+                        <button onclick="closeModal('memoryModal')" class="text-slate-400 hover:text-white transition-colors p-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
                 </div>
-                <div id="memoryContent" class="text-slate-300 leading-relaxed text-lg bg-slate-800/30 rounded-xl p-6 border border-slate-700/30 whitespace-pre-wrap">
+                
+                <!-- Metadados da memória -->
+                <div id="memory-metadata" class="mb-4 text-xs text-slate-400 space-y-1"></div>
+                
+                <div id="memoryContent" class="text-slate-300 leading-relaxed bg-slate-800/50 rounded-lg p-4 border border-slate-700/50 whitespace-pre-wrap text-sm">
                     <!-- Conteúdo da memória será inserido aqui -->
                 </div>
-                <div class="mt-6 flex justify-center">
-                    <button onclick="closeModal('memoryModal')" class="px-8 py-3 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 rounded-xl transition-all duration-300 backdrop-blur">
+                
+                <div class="mt-4 flex justify-center">
+                    <button onclick="closeModal('memoryModal')" class="btn-secondary px-6 py-2 text-sm">
                         Fechar
                     </button>
                 </div>
@@ -195,40 +572,39 @@
     </div>
 
     <!-- Modal para Resposta da IA -->
-    <div id="aiResponseModal" class="modal fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('aiResponseModal', event)">
-        <div class="memory-modal rounded-3xl shadow-2xl w-full max-w-4xl m-4 max-h-[85vh] overflow-y-auto">
-            <div class="p-8">
-                <div class="flex items-start justify-between mb-6">
+    <div id="aiResponseModal" class="fixed inset-0 modal-overlay flex items-center justify-center hidden opacity-0 z-50 transition-opacity duration-300" onclick="closeModal('aiResponseModal', event)">
+        <div class="modal-panel w-full max-w-4xl m-4 max-h-[85vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center space-x-3">
-                        <div class="w-3 h-3 bg-gradient-to-r from-amber-400 to-orange-400 rounded-full animate-pulse"></div>
-                        <h3 class="text-xl font-semibold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">Assistente IA</h3>
-                        <span id="aiModelBadge" class="px-2 py-1 bg-amber-500/20 text-amber-300 text-xs rounded-full"></span>
+                        <h3 class="text-lg font-semibold text-white">Assistente IA</h3>
+                        <span id="aiModelBadge" class="status-badge active"></span>
                     </div>
-                    <button onclick="closeModal('aiResponseModal')" class="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-700/50 rounded-lg">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <button onclick="closeModal('aiResponseModal')" class="text-slate-400 hover:text-white transition-colors p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
                 
-                <div class="mb-6">
+                <div class="mb-4">
                     <h4 class="text-sm font-medium text-slate-400 mb-2">Sua pergunta:</h4>
-                    <div id="userQuery" class="bg-slate-800/30 rounded-xl p-4 text-slate-300 border border-slate-700/30"></div>
+                    <div id="userQuery" class="bg-slate-800/50 rounded-lg p-3 text-slate-300 border border-slate-700/50 text-sm"></div>
                 </div>
                 
-                <div class="mb-6">
-                    <h4 class="text-sm font-medium text-amber-400 mb-2">Resposta:</h4>
-                    <div id="aiResponseContent" class="bg-gradient-to-br from-amber-500/10 to-orange-500/10 rounded-xl p-6 text-slate-200 leading-relaxed border border-amber-500/20 whitespace-pre-wrap"></div>
+                <div class="mb-4">
+                    <h4 class="text-sm font-medium text-purple-400 mb-2">Resposta:</h4>
+                    <div id="aiResponseContent" class="bg-purple-500/10 rounded-lg p-4 text-slate-200 leading-relaxed border border-purple-500/20 whitespace-pre-wrap text-sm"></div>
                 </div>
                 
-                <div id="sourcesSection" class="mb-6">
-                    <h4 class="text-sm font-medium text-cyan-400 mb-3">Memórias consultadas:</h4>
-                    <div id="sourcesList" class="space-y-2 max-h-40 overflow-y-auto"></div>
+                <div id="sourcesSection" class="mb-4">
+                    <h4 class="text-sm font-medium text-slate-400 mb-2">Memórias consultadas:</h4>
+                    <div id="sourcesList" class="space-y-2 max-h-32 overflow-y-auto"></div>
                 </div>
                 
                 <div class="flex justify-center space-x-3">
-                    <button onclick="closeModal('aiResponseModal')" class="px-8 py-3 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 rounded-xl transition-all duration-300 backdrop-blur">
+                    <button onclick="closeModal('aiResponseModal')" class="btn-secondary px-6 py-2 text-sm">
                         Fechar
                     </button>
-                    <button onclick="copyAiResponse()" class="px-8 py-3 bg-gradient-to-r from-amber-600/50 to-orange-600/50 hover:from-amber-500/50 hover:to-orange-500/50 text-amber-300 rounded-xl transition-all duration-300 backdrop-blur">
+                    <button onclick="copyAiResponse()" class="btn-primary px-6 py-2 text-sm">
                         Copiar Resposta
                     </button>
                 </div>
@@ -236,21 +612,41 @@
         </div>
     </div>
 
-    <!-- Loading Spinner -->
-    <div id="loadingSpinner" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
-        <div class="text-center">
-            <div class="spinner mx-auto mb-4"></div>
-            <p class="text-cyan-400 font-medium">Processando...</p>
+    <!-- Modal de Estatísticas -->
+    <div id="statsModal" class="fixed inset-0 modal-overlay flex items-center justify-center hidden opacity-0 z-50 transition-opacity duration-300" onclick="closeModal('statsModal', event)">
+        <div class="modal-panel w-full max-w-3xl m-4 max-h-[80vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-white">Estatísticas do Sistema</h3>
+                    <button onclick="closeModal('statsModal')" class="text-slate-400 hover:text-white transition-colors p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                
+                <div id="statsContent" class="space-y-6">
+                    <!-- Conteúdo das estatísticas será inserido aqui -->
+                </div>
+            </div>
         </div>
     </div>
 
-    <script>
-        // CORREÇÃO 1: Usar um caminho relativo para a API.
-        // Isso faz com que o frontend sempre chame o servidor de onde ele foi carregado,
-        // seja localhost ou seu IP externo.
-        const API_URL = ''; // Em vez de 'http://127.0.0.1:5000'
+    <!-- Loading Spinner melhorado -->
+    <div id="loadingSpinner" class="hidden fixed inset-0 modal-overlay flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="spinner mx-auto mb-4" style="width: 40px; height: 40px;"></div>
+            <p id="loadingText" class="loading-text">Processando...</p>
+            <div id="loadingSubtext" class="text-xs text-slate-500 mt-2"></div>
+        </div>
+    </div>
 
-        // --- Elementos DOM (sem alterações) ---
+    <!-- Container para toasts -->
+    <div id="toast-container"></div>
+
+    <script>
+        // --- Configuração da API ---
+        const API_URL = '';
+
+        // --- Elementos DOM ---
         const fab = document.getElementById('fab');
         const fabMenu = document.getElementById('fab-menu');
         const fabIconPlus = document.getElementById('fab-icon-plus');
@@ -261,30 +657,78 @@
         const askBtn = document.getElementById('askBtn');
         const askAiBtn = document.getElementById('askAiBtn');
         const loadingSpinner = document.getElementById('loadingSpinner');
+        const loadingText = document.getElementById('loadingText');
+        const loadingSubtext = document.getElementById('loadingSubtext');
         const nodeCount = document.getElementById('node-count');
+        const categoryCount = document.getElementById('category-count');
+        const connectionCount = document.getElementById('connection-count');
         const memoryContent = document.getElementById('memoryContent');
         const aiStatusText = document.getElementById('aiStatusText');
         const aiModelBadge = document.getElementById('aiModelBadge');
         const userQuery = document.getElementById('userQuery');
         const aiResponseContent = document.getElementById('aiResponseContent');
         const sourcesList = document.getElementById('sourcesList');
+        const filterButtons = document.getElementById('filter-buttons');
+        const sortSelector = document.getElementById('sort-selector');
+        const searchCategoryFilter = document.getElementById('search-category-filter');
+        const breadcrumbs = document.getElementById('breadcrumbs');
+        const connectionStatus = document.getElementById('connection-status');
+        const densityLayers = document.getElementById('density-layers');
 
+        // --- Variáveis globais ---
         let aiAvailable = false;
         let aiModel = '';
+        let categories = {};
+        let currentFilter = 'all';
+        let currentSort = 'relevance';
+        let currentMemoryId = null;
+        let isEditMode = false;
+        let layersVisible = true;
 
-        // --- Funções de Comunicação com API ---
+        // --- Sistema de Notificações Toast ---
+        function showToast(message, type = 'info', duration = 3000) {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <span>${message}</span>
+                    <button onclick="this.parentElement.parentElement.remove()" class="ml-3 text-white/80 hover:text-white">×</button>
+                </div>
+            `;
+            
+            document.getElementById('toast-container').appendChild(toast);
+            
+            // Anima entrada
+            setTimeout(() => toast.classList.add('show'), 100);
+            
+            // Remove automaticamente
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
 
-        // Função genérica para fetch, com tratamento de erro de autenticação
+        // --- Sistema de Loading Estados ---
+        function setLoading(isLoading, message = 'Processando...', subtext = '') {
+            loadingSpinner.classList.toggle('hidden', !isLoading);
+            if (isLoading) {
+                loadingText.textContent = message;
+                loadingSubtext.textContent = subtext;
+            }
+        }
+
+        // --- Função genérica para fetch com tratamento de erros ---
         async function apiFetch(endpoint, options = {}) {
             try {
+                connectionStatus.textContent = 'Conectando...';
+                connectionStatus.className = 'status-badge';
+                
                 const response = await fetch(API_URL + endpoint, options);
                 
                 if (response.status === 401) {
-                    // Se não estiver autenticado, o backend redireciona.
-                    // Recarrega a página para o usuário ver a tela de login.
-                    alert("Sessão expirada. Redirecionando para a tela de login.");
-                    window.location.reload();
-                    return null; // Interrompe a execução
+                    showToast("Sessão expirada. Redirecionando para login...", 'error', 5000);
+                    setTimeout(() => window.location.reload(), 2000);
+                    return null;
                 }
                 
                 if (!response.ok) {
@@ -292,97 +736,318 @@
                     throw new Error(`Erro na API (${response.status}): ${errorData.message}`);
                 }
                 
+                connectionStatus.textContent = 'Conectado';
+                connectionStatus.className = 'status-badge active';
+                
                 return await response.json();
             } catch (error) {
                 console.error(`💥 Erro na chamada para ${endpoint}:`, error);
-                alert(`Não foi possível conectar ao cérebro (backend).\nVerifique se o servidor está rodando e acessível.\n\nDetalhes: ${error.message}`);
+                connectionStatus.textContent = 'Erro';
+                connectionStatus.className = 'status-badge';
+                
+                showToast(`Erro de conexão: ${error.message}`, 'error', 5000);
                 return null;
             }
         }
 
-        async function checkAiStatus() {
-            const data = await apiFetch('/ai-status');
-            if (!data) return;
-
-            aiAvailable = data.ai_available;
-            aiModel = data.model || 'N/A';
-            
-            if (aiAvailable) {
-                aiStatusText.textContent = `IA ativa • ${aiModel}`;
-                aiStatusText.className = 'text-green-400';
-                aiModelBadge.textContent = aiModel;
-                askAiBtn.disabled = false;
-                askAiBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-            } else {
-                aiStatusText.textContent = 'IA indisponível';
-                aiStatusText.className = 'text-amber-400';
-                aiModelBadge.textContent = 'Offline';
-                askAiBtn.disabled = true;
-                askAiBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        // --- Funções de Categorização ---
+        async function loadCategories() {
+            const data = await apiFetch('/get-categories');
+            if (data && data.status === 'success') {
+                categories = data.categories;
+                updateCategoryFilters();
+                updateSearchCategoryFilter();
             }
         }
 
+        function updateCategoryFilters() {
+            filterButtons.innerHTML = `
+                <div class="category-filter active" data-category="all" style="background: rgba(139, 92, 246, 0.2); color: #8b5cf6;">
+                    Todas
+                </div>
+            `;
+            
+            Object.entries(categories).forEach(([name, data]) => {
+                const button = document.createElement('div');
+                button.className = 'category-filter';
+                button.dataset.category = name;
+                button.style.backgroundColor = data.color + '33';
+                button.style.color = data.color;
+                button.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+                button.onclick = () => filterByCategory(name);
+                filterButtons.appendChild(button);
+            });
+        }
+
+        function updateSearchCategoryFilter() {
+            searchCategoryFilter.innerHTML = '<option value="all">Todas as categorias</option>';
+            Object.entries(categories).forEach(([name, data]) => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+                searchCategoryFilter.appendChild(option);
+            });
+        }
+
+        function filterByCategory(category) {
+            currentFilter = category;
+            
+            // Atualiza UI dos filtros
+            document.querySelectorAll('.category-filter').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-category="${category}"]`).classList.add('active');
+            
+            updateBreadcrumbs();
+            updateGraph();
+            showToast(`Filtrado por: ${category === 'all' ? 'Todas' : category}`, 'info', 2000);
+        }
+
+        // --- Sistema de Breadcrumbs ---
+        function updateBreadcrumbs() {
+            let crumbs = '<span class="breadcrumb-item" onclick="resetView()">Início</span>';
+            
+            if (currentFilter !== 'all') {
+                crumbs += '<span class="breadcrumb-separator">›</span>';
+                crumbs += `<span class="breadcrumb-item">${currentFilter.charAt(0).toUpperCase() + currentFilter.slice(1)}</span>`;
+            }
+            
+            breadcrumbs.innerHTML = crumbs;
+        }
+
+        function resetView() {
+            currentFilter = 'all';
+            document.querySelectorAll('.category-filter').forEach(btn => btn.classList.remove('active'));
+            document.querySelector('[data-category="all"]').classList.add('active');
+            clearSearch();
+            updateBreadcrumbs();
+        }
+
+        // --- Sistema de Camadas Adaptativo ---
+        function createDensityLayers() {
+            densityLayers.innerHTML = '';
+            
+            if (!layersVisible) return;
+            
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            for (let i = 1; i <= 4; i++) {
+                const layer = document.createElement('div');
+                layer.className = `layer layer-${i}`;
+                layer.style.left = centerX - (100 * i) + 'px';
+                layer.style.top = centerY - (100 * i) + 'px';
+                densityLayers.appendChild(layer);
+            }
+        }
+
+        function toggleLayers() {
+            layersVisible = !layersVisible;
+            createDensityLayers();
+            showToast(`Camadas ${layersVisible ? 'ativadas' : 'desativadas'}`, 'info', 2000);
+        }
+
+        // --- Funções de AI e Status ---
+        async function checkAiStatus() {
+            setLoading(true, 'Verificando status da IA...', 'Conectando com modelo local');
+            const data = await apiFetch('/ai-status');
+            
+            if (data) {
+                aiAvailable = data.ai_available;
+                aiModel = data.model || 'N/A';
+                
+                if (aiAvailable) {
+                    aiStatusText.textContent = `IA ativa • ${aiModel}`;
+                    aiStatusText.className = 'status-badge active';
+                    aiModelBadge.textContent = aiModel;
+                    askAiBtn.disabled = false;
+                    askAiBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    showToast('IA local ativada com sucesso!', 'success');
+                } else {
+                    aiStatusText.textContent = 'IA indisponível';
+                    aiStatusText.className = 'status-badge';
+                    aiModelBadge.textContent = 'Offline';
+                    askAiBtn.disabled = true;
+                    askAiBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    showToast('IA local não disponível', 'warning');
+                }
+            }
+            setLoading(false);
+        }
+
+        // --- Funções de carregamento e gestão de dados ---
         async function loadInitialNotes() {
-            setLoading(true);
+            setLoading(true, 'Carregando memórias...', 'Analisando conexões e categorias');
+            
             const savedNotes = await apiFetch('/get-all-notes');
             if (savedNotes) {
                 nodes = savedNotes.map(note => ({
                     id: `note-${note.id}`,
                     content: note.content,
-                    type: 'note'
+                    type: 'note',
+                    category: note.category,
+                    categoryColor: note.category_color,
+                    createdAt: note.created_at,
+                    updatedAt: note.updated_at,
+                    rawId: note.id
                 }));
+                
                 await fetchBackendConnections();
                 updateGraph();
+                showToast(`${savedNotes.length} memórias carregadas`, 'success');
             }
             setLoading(false);
         }
         
         async function fetchBackendConnections() {
+            setLoading(true, 'Analisando conexões...', 'Calculando similaridades semânticas');
+            
             const data = await apiFetch('/get-connections');
             if (data && data.status === 'success' && data.connections) {
+                // Remove conexões antigas mas mantém queries
                 links = links.filter(l => l.source.type === 'query' || l.target.type === 'query');
+                
                 data.connections.forEach(conn => {
                     const node1 = nodes.find(n => n.id === `note-${conn.id1}`);
                     const node2 = nodes.find(n => n.id === `note-${conn.id2}`);
                     if (node1 && node2) {
                         links.push({
-                            source: node1, target: node2,
-                            strength: conn.similarity, type: 'memory-connection'
+                            source: node1, 
+                            target: node2,
+                            strength: conn.similarity, 
+                            type: 'memory-connection',
+                            category1: conn.category1,
+                            category2: conn.category2
                         });
                     }
                 });
+                
                 updateGraph();
                 if (nodes.length > 3) setTimeout(fitToView, 500);
-            }
-        }
-        
-        async function addNote() {
-            const content = noteInput.value.trim();
-            if (content === '') return;
-            setLoading(true);
-            closeModal('addModal');
-            
-            const data = await apiFetch('/add-note', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: content })
-            });
-            
-            if (data) {
-                const newNode = { id: `note-${data.id}`, content: data.content, type: 'note' };
-                nodes.push(newNode);
-                await fetchBackendConnections(); // Atualiza conexões
-                updateGraph();
-                noteInput.value = '';
+                showToast(`${data.connections.length} conexões encontradas`, 'info');
             }
             setLoading(false);
         }
         
+        async function addNote() {
+            const content = noteInput.value.trim();
+            if (content === '') {
+                showToast('Por favor, digite algum conteúdo', 'warning');
+                return;
+            }
+            
+            setLoading(true, isEditMode ? 'Atualizando memória...' : 'Salvando nova memória...', 'Categorizando automaticamente');
+            closeModal('addModal');
+            
+            const endpoint = isEditMode ? '/edit-note' : '/add-note';
+            const body = isEditMode ? { id: currentMemoryId, content } : { content };
+            
+            const data = await apiFetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            
+            if (data && data.status === 'success') {
+                if (isEditMode) {
+                    // Atualiza nó existente
+                    const nodeIndex = nodes.findIndex(n => n.rawId === currentMemoryId);
+                    if (nodeIndex !== -1) {
+                        nodes[nodeIndex].content = data.content;
+                        nodes[nodeIndex].category = data.category;
+                        nodes[nodeIndex].categoryColor = data.category_color;
+                        nodes[nodeIndex].updatedAt = data.updated_at;
+                    }
+                    showToast('Memória atualizada com sucesso!', 'success');
+                } else {
+                    // Adiciona novo nó
+                    const newNode = { 
+                        id: `note-${data.id}`, 
+                        content: data.content, 
+                        type: 'note',
+                        category: data.category,
+                        categoryColor: data.category_color,
+                        createdAt: data.created_at,
+                        rawId: data.id
+                    };
+                    nodes.push(newNode);
+                    showToast(`Nova memória salva em: ${data.category}`, 'success');
+                }
+                
+                await fetchBackendConnections(); // Atualiza conexões
+                updateGraph();
+                noteInput.value = '';
+                resetEditMode();
+            }
+            setLoading(false);
+        }
+
+        async function deleteCurrentMemory() {
+            if (!currentMemoryId) return;
+            
+            if (!confirm('Tem certeza que deseja deletar esta memória? Esta ação não pode ser desfeita.')) {
+                return;
+            }
+            
+            setLoading(true, 'Deletando memória...', 'Removendo conexões associadas');
+            closeModal('memoryModal');
+            
+            const data = await apiFetch('/delete-note', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: currentMemoryId })
+            });
+            
+            if (data && data.status === 'success') {
+                // Remove nó da visualização
+                nodes = nodes.filter(n => n.rawId !== currentMemoryId);
+                // Remove conexões relacionadas
+                links = links.filter(l => 
+                    !(l.source.rawId === currentMemoryId || l.target.rawId === currentMemoryId)
+                );
+                
+                updateGraph();
+                showToast('Memória deletada com sucesso', 'success');
+                currentMemoryId = null;
+            }
+            setLoading(false);
+        }
+
+        function editCurrentMemory() {
+            if (!currentMemoryId) return;
+            
+            const node = nodes.find(n => n.rawId === currentMemoryId);
+            if (node) {
+                closeModal('memoryModal');
+                setTimeout(() => {
+                    isEditMode = true;
+                    currentMemoryId = node.rawId;
+                    noteInput.value = node.content;
+                    document.getElementById('add-modal-title').textContent = 'Editar Memória';
+                    addNoteBtn.textContent = 'Atualizar Memória';
+                    openModal('addModal');
+                }, 300);
+            }
+        }
+
+        function resetEditMode() {
+            isEditMode = false;
+            currentMemoryId = null;
+            document.getElementById('add-modal-title').textContent = 'Nova Memória';
+            addNoteBtn.textContent = 'Salvar Memória';
+        }
+        
         async function askQuestion(useAi = false) {
             const query = queryInput.value.trim();
-            if (query === '') return;
+            if (query === '') {
+                showToast('Por favor, digite sua pergunta', 'warning');
+                return;
+            }
             
-            setLoading(true);
+            const loadingMsg = useAi ? 'Consultando IA...' : 'Buscando memórias...';
+            const subtext = useAi ? 'Analisando contexto e gerando resposta' : 'Calculando similaridades';
+            
+            setLoading(true, loadingMsg, subtext);
             closeModal('searchModal');
             
             // Remove buscas anteriores
@@ -390,7 +1055,11 @@
             links = links.filter(l => l.source.type !== 'query' && l.target.type !== 'query');
             
             const endpoint = useAi ? '/ask-ai' : '/ask';
-            const body = { query: query };
+            const body = { 
+                query: query,
+                category: searchCategoryFilter.value,
+                sort: currentSort
+            };
 
             const data = await apiFetch(endpoint, {
                 method: 'POST',
@@ -408,12 +1077,14 @@
                 const sourcesContent = (data.sources || []).map(s => s.content);
                 if (sourcesContent.length > 0) {
                     addQueryNodeToGraph(query, sourcesContent, true);
+                    showToast(`IA consultou ${data.sources.length} memórias`, 'info');
                 }
             } else {
                  if (data.results && data.results.length > 0) {
                     addQueryNodeToGraph(query, data.results, false);
+                    showToast(`${data.results.length} memórias encontradas`, 'success');
                 } else {
-                    alert("Não encontrei nenhuma memória relevante para sua pergunta.");
+                    showToast("Não encontrei memórias relevantes", 'warning');
                 }
             }
         }
@@ -429,7 +1100,11 @@
             relatedContent.forEach(content => {
                 const targetNode = nodes.find(n => n.type === 'note' && n.content === content);
                 if (targetNode) {
-                    links.push({ source: queryNode, target: targetNode });
+                    links.push({ 
+                        source: queryNode, 
+                        target: targetNode,
+                        type: 'query-connection'
+                    });
                 }
             });
 
@@ -439,18 +1114,28 @@
             }, 500);
         }
 
-        // --- Funções de UI e Grafo (permanecem praticamente as mesmas) ---
+        // --- Funções de UI e Interface ---
         
         function showAiResponse(query, response, sources) {
             userQuery.textContent = query;
             aiResponseContent.textContent = response;
             sourcesList.innerHTML = '';
+            
             if (sources && sources.length > 0) {
                 sources.forEach(source => {
                     const sourceElement = document.createElement('div');
-                    sourceElement.className = 'bg-slate-800/50 rounded-lg p-3 border border-slate-700/30 cursor-pointer hover:bg-slate-700/50';
-                    sourceElement.innerHTML = `<p class="text-slate-300 text-sm truncate">${source.content}</p><span class="text-cyan-300 text-xs">${(source.score * 100).toFixed(0)}%</span>`;
-                    sourceElement.onclick = () => { closeModal('aiResponseModal'); setTimeout(() => showMemory(source.content), 300); };
+                    sourceElement.className = 'memory-card';
+                    sourceElement.innerHTML = `
+                        <div class="flex justify-between items-start mb-2">
+                            <p class="text-slate-300 text-sm flex-1">${source.content.substring(0, 150)}${source.content.length > 150 ? '...' : ''}</p>
+                            <span class="text-purple-400 text-xs font-medium ml-3">${(source.score * 100).toFixed(0)}%</span>
+                        </div>
+                        ${source.category ? `<div class="category-filter text-xs" style="background: ${categories[source.category]?.color}33; color: ${categories[source.category]?.color}">${source.category}</div>` : ''}
+                    `;
+                    sourceElement.onclick = () => { 
+                        closeModal('aiResponseModal'); 
+                        setTimeout(() => showMemory(source.content, null, source.category), 300); 
+                    };
                     sourcesList.appendChild(sourceElement);
                 });
                 document.getElementById('sourcesSection').style.display = 'block';
@@ -462,11 +1147,79 @@
 
         function copyAiResponse() {
             navigator.clipboard.writeText(aiResponseContent.textContent).then(() => {
-                const button = event.target;
-                const originalText = button.textContent;
-                button.textContent = 'Copiado!';
-                setTimeout(() => { button.textContent = originalText; }, 2000);
+                showToast('Resposta copiada!', 'success', 2000);
             });
+        }
+        
+        // Previa categoria durante digitação (CORRIGIDO)
+        let categoryPreviewTimeout;
+        noteInput.addEventListener('input', () => {
+            clearTimeout(categoryPreviewTimeout);
+            const content = noteInput.value.trim();
+            
+            if (content.length > 5) {  // Reduzido de 10 para 5
+                categoryPreviewTimeout = setTimeout(() => {
+                    predictCategory(content);
+                }, 300);  // Reduzido de 500 para 300ms
+            } else {
+                // Esconde preview se texto muito curto
+                document.getElementById('category-preview').classList.add('hidden');
+            }
+        });
+
+        function predictCategory(content) {
+            const words = content.toLowerCase();
+            let bestCategory = 'geral';
+            let bestScore = 0;
+            
+            // Sistema melhorado de predição local
+            const categoryKeywords = {
+                'pessoal': ['amigo', 'amiga', 'família', 'pai', 'mãe', 'irmão', 'irmã', 'namorado', 'namorada', 'esposo', 'esposa', 'filho', 'filha', 'primo', 'prima', 'tio', 'tia', 'avô', 'avó', 'friend', 'brother', 'sister', 'casa', 'vida', 'pessoa', 'relacionamento', 'saúde'],
+                'trabalho': ['trabalho', 'emprego', 'chefe', 'colega', 'projeto', 'reunião', 'empresa', 'job', 'work', 'office', 'meeting', 'carreira', 'negócio'],
+                'conhecimento': ['estudar', 'aprender', 'livro', 'curso', 'universidade', 'escola', 'prova', 'estudo', 'learn', 'study', 'book', 'conhecimento', 'skill'],
+                'tecnologia': ['programar', 'código', 'software', 'app', 'python', 'javascript', 'html', 'css', 'computer', 'tech', 'tecnologia', 'computador', 'internet'],
+                'finanças': ['dinheiro', 'banco', 'conta', 'pagar', 'comprar', 'vender', 'investir', 'money', 'bank', 'investimento', 'economia'],
+                'criatividade': ['desenhar', 'pintar', 'música', 'arte', 'design', 'criar', 'art', 'music', 'create', 'criativo', 'pintura', 'desenho', 'fotografia']
+            };
+            
+            // Calcula score para cada categoria
+            Object.entries(categoryKeywords).forEach(([categoryName, keywords]) => {
+                let score = 0;
+                keywords.forEach(keyword => {
+                    if (words.includes(keyword)) {
+                        score += 2; // Peso alto para match exato
+                    }
+                    // Busca parcial para palavras compostas
+                    if (words.includes(keyword.substring(0, Math.max(4, keyword.length - 2)))) {
+                        score += 1;
+                    }
+                });
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCategory = categoryName;
+                }
+            });
+            
+            // Mostra preview apenas se confiança suficiente
+            if (bestScore > 0 && bestCategory !== 'geral') {
+                const preview = document.getElementById('category-preview');
+                const colorEl = document.getElementById('category-color');
+                const nameEl = document.getElementById('category-name');
+                const confidenceEl = document.getElementById('category-confidence');
+                
+                const categoryColor = categories[bestCategory]?.color || '#8b5cf6';
+                const confidence = Math.min(90, bestScore * 25); // Melhor cálculo de confiança
+                
+                colorEl.style.backgroundColor = categoryColor;
+                nameEl.textContent = bestCategory.charAt(0).toUpperCase() + bestCategory.slice(1);
+                confidenceEl.textContent = `${confidence}% confiança`;
+                preview.classList.remove('hidden');
+                
+                console.log(`🎯 Categoria prevista: ${bestCategory} (${confidence}% confiança)`);
+            } else {
+                document.getElementById('category-preview').classList.add('hidden');
+            }
         }
         
         fab.addEventListener('click', () => {
@@ -480,38 +1233,136 @@
             const modal = document.getElementById(modalId);
             modal.classList.remove('hidden');
             setTimeout(() => modal.classList.remove('opacity-0'), 10);
-            if (modalId === 'addModal') noteInput.focus();
+            
+            if (modalId === 'addModal') {
+                noteInput.focus();
+                if (!isEditMode) {
+                    document.getElementById('category-preview').classList.add('hidden');
+                }
+            }
             if (modalId === 'searchModal') queryInput.focus();
         }
 
         function closeModal(modalId, event) {
-            if (event && event.target.closest('.glass-effect, .memory-modal')) return;
+            if (event && event.target.closest('.modal-panel')) return;
+            
             const modal = document.getElementById(modalId);
             modal.classList.add('opacity-0');
             setTimeout(() => modal.classList.add('hidden'), 300);
-        }
-        
-        function setLoading(isLoading) {
-            loadingSpinner.classList.toggle('hidden', !isLoading);
+            
+            if (modalId === 'addModal') {
+                resetEditMode();
+                document.getElementById('category-preview').classList.add('hidden');
+            }
         }
 
         function updateStats() {
             const memoryNodes = nodes.filter(n => n.type === 'note').length;
-            nodeCount.textContent = `${memoryNodes} memória${memoryNodes !== 1 ? 's' : ''}`;
+            const connectionLinks = links.filter(l => l.type === 'memory-connection').length;
+            const categoriesUsed = new Set(nodes.filter(n => n.type === 'note').map(n => n.category)).size;
+            
+            nodeCount.textContent = memoryNodes;
+            connectionCount.textContent = connectionLinks;
+            categoryCount.textContent = categoriesUsed;
         }
 
-        function showMemory(content) {
+        function showMemory(content, id = null, category = null) {
+            const node = id ? nodes.find(n => n.rawId === id) : nodes.find(n => n.content === content);
+            
             memoryContent.textContent = content;
+            
+            if (node) {
+                currentMemoryId = node.rawId;
+                
+                // Mostra metadados
+                const metadata = document.getElementById('memory-metadata');
+                metadata.innerHTML = `
+                    <div>Categoria: <span style="color: ${node.categoryColor}">${node.category}</span></div>
+                    <div>Criado: ${node.createdAt ? new Date(node.createdAt).toLocaleString('pt-BR') : 'N/A'}</div>
+                    ${node.updatedAt && node.updatedAt !== node.createdAt ? `<div>Atualizado: ${new Date(node.updatedAt).toLocaleString('pt-BR')}</div>` : ''}
+                `;
+                
+                // Badge de categoria
+                const badge = document.getElementById('memory-category-badge');
+                badge.style.backgroundColor = node.categoryColor + '33';
+                badge.style.color = node.categoryColor;
+                badge.textContent = node.category;
+                badge.classList.remove('hidden');
+            } else {
+                currentMemoryId = null;
+                document.getElementById('memory-metadata').innerHTML = '';
+                document.getElementById('memory-category-badge').classList.add('hidden');
+            }
+            
             openModal('memoryModal');
         }
 
         function clearSearch() {
             nodes = nodes.filter(n => n.type !== 'query');
-            links = [];
+            links = links.filter(l => l.type !== 'query-connection');
             fetchBackendConnections();
             updateGraph();
+            showToast('Busca limpa', 'info', 2000);
         }
 
+        // --- Estatísticas ---
+        async function toggleStats() {
+            setLoading(true, 'Carregando estatísticas...', 'Analisando dados do sistema');
+            
+            const data = await apiFetch('/stats');
+            if (data && data.status === 'success') {
+                const stats = data.stats;
+                const content = document.getElementById('statsContent');
+                
+                content.innerHTML = `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div class="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div class="text-2xl font-bold text-accent-primary">${stats.total_memories}</div>
+                            <div class="text-sm text-slate-400">Total de Memórias</div>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div class="text-2xl font-bold text-green-400">${stats.total_connections}</div>
+                            <div class="text-sm text-slate-400">Conexões Ativas</div>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div class="text-2xl font-bold text-blue-400">${stats.total_categories}</div>
+                            <div class="text-sm text-slate-400">Categorias</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h4 class="text-lg font-semibold mb-3">Distribuição por Categoria</h4>
+                        <div class="space-y-2">
+                            ${Object.entries(stats.categories_distribution).map(([cat, count]) => `
+                                <div class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg">
+                                    <div class="flex items-center space-x-3">
+                                        <div class="w-3 h-3 rounded-full" style="background: ${categories[cat]?.color || '#64748b'}"></div>
+                                        <span class="font-medium">${cat.charAt(0).toUpperCase() + cat.slice(1)}</span>
+                                    </div>
+                                    <span class="text-slate-400">${count} memórias</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div class="text-lg font-semibold mb-2">Conectividade</div>
+                            <div class="text-sm text-slate-400">Média de ${stats.avg_connections_per_memory} conexões por memória</div>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div class="text-lg font-semibold mb-2">Status da IA</div>
+                            <div class="text-sm ${stats.ai_status === 'Ativo' ? 'text-green-400' : 'text-yellow-400'}">${stats.ai_status}</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            setLoading(false);
+            openModal('statsModal');
+        }
+
+        // --- Sistema de Grafo (D3.js) ---
         let nodes = [];
         let links = [];
         const width = window.innerWidth;
@@ -523,10 +1374,20 @@
         svg.call(zoom);
 
         const simulation = d3.forceSimulation(nodes)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(width < 768 ? 100 : 150))
-            .force("charge", d3.forceManyBody().strength(width < 768 ? -300 : -400))
+            .force("link", d3.forceLink(links).id(d => d.id).distance(d => {
+                // Distância baseada na categoria
+                if (d.source.category === d.target.category) return 80;
+                return width < 768 ? 120 : 180;
+            }))
+            .force("charge", d3.forceManyBody().strength(d => {
+                // Força baseada no tipo de nó
+                if (d.type === 'query') return -600;
+                return width < 768 ? -400 : -500;
+            }))
             .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collision", d3.forceCollide().radius(40));
+            .force("collision", d3.forceCollide().radius(50))
+            .force("x", d3.forceX(width / 2).strength(0.1))
+            .force("y", d3.forceY(height / 2).strength(0.1));
 
         let link = g.append("g").attr("class", "links").selectAll("line");
         let node = g.append("g").attr("class", "nodes").selectAll("g");
@@ -547,29 +1408,76 @@
         }
 
         function updateGraph() {
-            link = link.data(links, d => `${d.source.id}-${d.target.id}`);
-            link.exit().remove();
-            link = link.enter().append("line").attr("class", "link").merge(link);
+            // Filtra nós baseado no filtro atual
+            const filteredNodes = currentFilter === 'all' ? 
+                nodes : 
+                nodes.filter(n => n.type === 'query' || n.category === currentFilter);
             
-            node = node.data(nodes, d => d.id);
+            // Filtra links baseado nos nós visíveis
+            const visibleNodeIds = new Set(filteredNodes.map(n => n.id));
+            const filteredLinks = links.filter(l => 
+                visibleNodeIds.has(l.source.id || l.source) && 
+                visibleNodeIds.has(l.target.id || l.target)
+            );
+            
+            // Atualiza links
+            link = link.data(filteredLinks, d => `${d.source.id || d.source}-${d.target.id || d.target}`);
+            link.exit().remove();
+            link = link.enter().append("line")
+                .attr("class", d => `link ${d.type === 'memory-connection' && d.category1 === d.category2 ? 'category-connection' : ''}`)
+                .attr("stroke", d => {
+                    if (d.type === 'query-connection') return '#8b5cf6';
+                    if (d.category1 === d.category2 && categories[d.category1]) {
+                        return categories[d.category1].color;
+                    }
+                    return '#334155';
+                })
+                .merge(link);
+            
+            // Atualiza nós
+            node = node.data(filteredNodes, d => d.id);
             node.exit().remove();
+            
             const nodeEnter = node.enter().append("g")
                 .attr("class", d => `node node-${d.type}`)
                 .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended))
-                .on("click", (event, d) => { if (d.type === 'note') showMemory(d.content); });
+                .on("click", (event, d) => { 
+                    if (d.type === 'note') showMemory(d.content, d.rawId, d.category); 
+                });
             
-            nodeEnter.append("circle").attr("r", d => d.type === 'query' ? 12 : 10);
-            nodeEnter.append("text").attr("dy", 25).attr("text-anchor", "middle").style("font-size", "10px").style("fill", "#94a3b8").text(d => d.content.substring(0, 20) + (d.content.length > 20 ? '...' : ''));
+            nodeEnter.append("circle")
+                .attr("r", d => d.type === 'query' ? 15 : 12)
+                .attr("fill", d => {
+                    if (d.type === 'query') return '#8b5cf6';
+                    return d.categoryColor || '#cbd5e1';
+                })
+                .attr("stroke", d => {
+                    if (d.type === 'query') return '#a855f7';
+                    return d.categoryColor ? d3.color(d.categoryColor).darker(0.5) : '#475569';
+                });
+            
+            nodeEnter.append("text")
+                .attr("dy", 25)
+                .attr("text-anchor", "middle")
+                .text(d => {
+                    const maxLength = d.type === 'query' ? 25 : 20;
+                    return d.content.substring(0, maxLength) + (d.content.length > maxLength ? '...' : '');
+                });
+            
             node = nodeEnter.merge(node);
             
-            simulation.nodes(nodes).on("tick", ticked);
-            simulation.force("link").links(links);
+            // Atualiza simulação
+            simulation.nodes(filteredNodes).on("tick", ticked);
+            simulation.force("link").links(filteredLinks);
             simulation.alpha(1).restart();
+            
             updateStats();
+            createDensityLayers();
         }
 
         function ticked() {
-            link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+            link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
             node.attr("transform", d => `translate(${d.x},${d.y})`);
         }
 
@@ -583,23 +1491,70 @@
             d.fx = null; d.fy = null;
         }
 
+        // --- Event Listeners ---
         addNoteBtn.addEventListener('click', addNote);
-        noteInput.addEventListener('keypress', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote(); } });
+        noteInput.addEventListener('keypress', e => { 
+            if (e.key === 'Enter' && !e.shiftKey) { 
+                e.preventDefault(); 
+                addNote(); 
+            } 
+        });
         
         askBtn.addEventListener('click', () => askQuestion(false));
         askAiBtn.addEventListener('click', () => askQuestion(true));
-        queryInput.addEventListener('keypress', e => { if (e.key === 'Enter') { askQuestion(e.ctrlKey || e.metaKey); } });
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            await loadInitialNotes();
-            await checkAiStatus();
+        queryInput.addEventListener('keypress', e => { 
+            if (e.key === 'Enter') { 
+                askQuestion(e.ctrlKey || e.metaKey); 
+            } 
         });
 
+        sortSelector.addEventListener('change', e => {
+            currentSort = e.target.value;
+            showToast(`Ordenação: ${e.target.options[e.target.selectedIndex].text}`, 'info', 2000);
+        });
+
+        // --- Inicialização ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            setLoading(true, 'Inicializando sistema...', 'Carregando componentes');
+            
+            await loadCategories();
+            await loadInitialNotes();
+            await checkAiStatus();
+            
+            createDensityLayers();
+            updateBreadcrumbs();
+            
+            setLoading(false);
+            showToast('Sistema TwoMind inicializado!', 'success');
+        });
+
+        // --- Responsividade ---
         window.addEventListener('resize', () => {
             const newWidth = window.innerWidth;
             const newHeight = window.innerHeight;
             svg.attr("width", newWidth).attr("height", newHeight);
             simulation.force("center", d3.forceCenter(newWidth / 2, newHeight / 2)).restart();
+            createDensityLayers();
+        });
+
+        // --- Atalhos de teclado ---
+        document.addEventListener('keydown', e => {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case 'n':
+                        e.preventDefault();
+                        openModal('addModal');
+                        break;
+                    case 'f':
+                        e.preventDefault();
+                        openModal('searchModal');
+                        break;
+                    case 'r':
+                        e.preventDefault();
+                        resetZoom();
+                        break;
+                }
+            }
         });
     </script>
 </body>
