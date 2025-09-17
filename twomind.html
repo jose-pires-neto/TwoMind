@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Segundo Cérebro - Visualização Gráfica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+        #graph-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(ellipse at center, #0f172a 0%, #020617 100%);
+        }
+        .node circle {
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+        }
+        .node:hover circle {
+            transform: scale(1.2);
+            filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4));
+        }
+        .link {
+            stroke: #334155;
+            stroke-opacity: 0.4;
+            transition: all 0.3s ease;
+        }
+        .link.highlighted {
+            stroke: #06b6d4;
+            stroke-opacity: 0.8;
+            stroke-width: 3;
+        }
+        .modal {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(20px);
+        }
+        .memory-modal {
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
+            border: 1px solid rgba(100, 116, 139, 0.2);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .spinner {
+            border: 4px solid rgba(6, 182, 212, 0.2);
+            border-radius: 50%;
+            border-top: 4px solid #06b6d4;
+            width: 32px;
+            height: 32px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 
+            0% { transform: rotate(0deg); } 
+            100% { transform: rotate(360deg); } 
+        }
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(6, 182, 212, 0.3); }
+            50% { box-shadow: 0 0 40px rgba(6, 182, 212, 0.6); }
+        }
+        .search-active {
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+        .glass-effect {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 116, 139, 0.1);
+        }
+        .node-memory circle {
+            fill: #0891b2;
+        }
+        .node-query circle {
+            fill: #a21caf;
+            stroke: #f0abfc;
+            stroke-width: 2;
+        }
+        @media (max-width: 768px) {
+            .fab-container {
+                bottom: 1rem;
+                right: 1rem;
+            }
+            .main-title {
+                font-size: 1.25rem;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-white">
+
+    <div id="graph-container"></div>
+    
+    <!-- Header Info -->
+    <div class="absolute top-4 left-4 text-slate-400 text-sm max-w-xs glass-effect rounded-lg p-3">
+        <h1 class="text-2xl font-bold text-cyan-400 main-title mb-1">Segundo Cérebro</h1>
+        <p class="text-xs">Toque em uma memória para expandir</p>
+        <p class="text-xs text-slate-500">Arraste para navegar • Scroll para zoom</p>
+        <div id="stats" class="text-xs mt-2 text-slate-500">
+            <span id="node-count">0 memórias</span>
+        </div>
+    </div>
+
+    <!-- Controles de Navegação -->
+    <div class="absolute top-4 right-4 flex flex-col space-y-2">
+        <button onclick="resetZoom()" class="glass-effect p-3 rounded-lg hover:bg-slate-700/50 transition-all duration-300" title="Centralizar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>
+        </button>
+        <button onclick="fitToView()" class="glass-effect p-3 rounded-lg hover:bg-slate-700/50 transition-all duration-300" title="Ver Todas">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+    </div>
+
+    <!-- FAB Menu -->
+    <div class="absolute bottom-8 right-8 fab-container">
+        <div id="fab-menu" class="flex flex-col items-end space-y-3 mb-3 hidden">
+            <button onclick="openModal('addModal')" class="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-3 px-5 rounded-full shadow-xl flex items-center transition-all duration-300 hover:scale-105">
+                <span class="mr-2">Criar Memória</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+            <button onclick="openModal('searchModal')" class="bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-semibold py-3 px-5 rounded-full shadow-xl flex items-center transition-all duration-300 hover:scale-105">
+                <span class="mr-2">Buscar</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
+            <button onclick="clearSearch()" class="bg-slate-600 hover:bg-slate-500 text-white font-semibold py-3 px-5 rounded-full shadow-xl flex items-center transition-all duration-300 hover:scale-105">
+                <span class="mr-2">Limpar</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+        </div>
+        <button id="fab" class="w-16 h-16 bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 hover:scale-110">
+            <svg id="fab-icon-plus" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <svg id="fab-icon-close" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+    </div>
+
+    <!-- Modal para Adicionar Memória -->
+    <div id="addModal" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('addModal', event)">
+        <div class="glass-effect p-8 rounded-3xl shadow-2xl w-full max-w-lg m-4">
+            <h2 class="text-2xl font-bold mb-6 text-cyan-400">Nova Memória</h2>
+            <textarea id="noteInput" placeholder="Digite sua memória aqui..." class="w-full h-32 bg-slate-900/50 rounded-xl p-4 text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 border border-slate-700/50 backdrop-blur"></textarea>
+            <button id="addNoteBtn" class="w-full mt-6 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg">
+                Salvar na Memória
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal para Buscar -->
+    <div id="searchModal" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('searchModal', event)">
+        <div class="glass-effect p-8 rounded-3xl shadow-2xl w-full max-w-lg m-4">
+            <h2 class="text-2xl font-bold mb-6 text-fuchsia-400">Buscar Conexões</h2>
+            <input type="text" id="queryInput" placeholder="O que você está procurando?" class="w-full bg-slate-900/50 rounded-xl p-4 text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 border border-slate-700/50 backdrop-blur mb-4">
+            
+            <div class="flex space-x-3">
+                <button id="askBtn" class="flex-1 bg-gradient-to-r from-fuchsia-600 to-fuchsia-500 hover:from-fuchsia-500 hover:to-fuchsia-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg">
+                    Buscar
+                </button>
+                <button id="askAiBtn" class="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold py-4 px-4 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg flex items-center" title="Buscar com IA (Ctrl+Enter)">
+                    <span class="text-xl">✨</span>
+                </button>
+            </div>
+            
+            <div id="aiStatus" class="mt-3 text-xs text-slate-500 text-center">
+                <span id="aiStatusText">Verificando IA...</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal para Visualizar Memória -->
+    <div id="memoryModal" class="modal fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('memoryModal', event)">
+        <div class="memory-modal rounded-3xl shadow-2xl w-full max-w-2xl m-4 max-h-[80vh] overflow-y-auto">
+            <div class="p-8">
+                <div class="flex items-start justify-between mb-6">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-3 h-3 bg-cyan-400 rounded-full animate-pulse"></div>
+                        <h3 class="text-xl font-semibold text-cyan-400">Memória</h3>
+                    </div>
+                    <button onclick="closeModal('memoryModal')" class="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-700/50 rounded-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div id="memoryContent" class="text-slate-300 leading-relaxed text-lg bg-slate-800/30 rounded-xl p-6 border border-slate-700/30 whitespace-pre-wrap">
+                    <!-- Conteúdo da memória será inserido aqui -->
+                </div>
+                <div class="mt-6 flex justify-center">
+                    <button onclick="closeModal('memoryModal')" class="px-8 py-3 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 rounded-xl transition-all duration-300 backdrop-blur">
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Resposta da IA -->
+    <div id="aiResponseModal" class="modal fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden opacity-0 z-50" onclick="closeModal('aiResponseModal', event)">
+        <div class="memory-modal rounded-3xl shadow-2xl w-full max-w-4xl m-4 max-h-[85vh] overflow-y-auto">
+            <div class="p-8">
+                <div class="flex items-start justify-between mb-6">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-3 h-3 bg-gradient-to-r from-amber-400 to-orange-400 rounded-full animate-pulse"></div>
+                        <h3 class="text-xl font-semibold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">Assistente IA</h3>
+                        <span id="aiModelBadge" class="px-2 py-1 bg-amber-500/20 text-amber-300 text-xs rounded-full"></span>
+                    </div>
+                    <button onclick="closeModal('aiResponseModal')" class="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-700/50 rounded-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="text-sm font-medium text-slate-400 mb-2">Sua pergunta:</h4>
+                    <div id="userQuery" class="bg-slate-800/30 rounded-xl p-4 text-slate-300 border border-slate-700/30"></div>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="text-sm font-medium text-amber-400 mb-2">Resposta:</h4>
+                    <div id="aiResponseContent" class="bg-gradient-to-br from-amber-500/10 to-orange-500/10 rounded-xl p-6 text-slate-200 leading-relaxed border border-amber-500/20 whitespace-pre-wrap"></div>
+                </div>
+                
+                <div id="sourcesSection" class="mb-6">
+                    <h4 class="text-sm font-medium text-cyan-400 mb-3">Memórias consultadas:</h4>
+                    <div id="sourcesList" class="space-y-2 max-h-40 overflow-y-auto"></div>
+                </div>
+                
+                <div class="flex justify-center space-x-3">
+                    <button onclick="closeModal('aiResponseModal')" class="px-8 py-3 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 rounded-xl transition-all duration-300 backdrop-blur">
+                        Fechar
+                    </button>
+                    <button onclick="copyAiResponse()" class="px-8 py-3 bg-gradient-to-r from-amber-600/50 to-orange-600/50 hover:from-amber-500/50 hover:to-orange-500/50 text-amber-300 rounded-xl transition-all duration-300 backdrop-blur">
+                        Copiar Resposta
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="spinner mx-auto mb-4"></div>
+            <p class="text-cyan-400 font-medium">Processando...</p>
+        </div>
+    </div>
+
+    <script>
+        // CORREÇÃO 1: Usar um caminho relativo para a API.
+        // Isso faz com que o frontend sempre chame o servidor de onde ele foi carregado,
+        // seja localhost ou seu IP externo.
+        const API_URL = ''; // Em vez de 'http://127.0.0.1:5000'
+
+        // --- Elementos DOM (sem alterações) ---
+        const fab = document.getElementById('fab');
+        const fabMenu = document.getElementById('fab-menu');
+        const fabIconPlus = document.getElementById('fab-icon-plus');
+        const fabIconClose = document.getElementById('fab-icon-close');
+        const noteInput = document.getElementById('noteInput');
+        const queryInput = document.getElementById('queryInput');
+        const addNoteBtn = document.getElementById('addNoteBtn');
+        const askBtn = document.getElementById('askBtn');
+        const askAiBtn = document.getElementById('askAiBtn');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const nodeCount = document.getElementById('node-count');
+        const memoryContent = document.getElementById('memoryContent');
+        const aiStatusText = document.getElementById('aiStatusText');
+        const aiModelBadge = document.getElementById('aiModelBadge');
+        const userQuery = document.getElementById('userQuery');
+        const aiResponseContent = document.getElementById('aiResponseContent');
+        const sourcesList = document.getElementById('sourcesList');
+
+        let aiAvailable = false;
+        let aiModel = '';
+
+        // --- Funções de Comunicação com API ---
+
+        // Função genérica para fetch, com tratamento de erro de autenticação
+        async function apiFetch(endpoint, options = {}) {
+            try {
+                const response = await fetch(API_URL + endpoint, options);
+                
+                if (response.status === 401) {
+                    // Se não estiver autenticado, o backend redireciona.
+                    // Recarrega a página para o usuário ver a tela de login.
+                    alert("Sessão expirada. Redirecionando para a tela de login.");
+                    window.location.reload();
+                    return null; // Interrompe a execução
+                }
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: 'Erro desconhecido' }));
+                    throw new Error(`Erro na API (${response.status}): ${errorData.message}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error(`💥 Erro na chamada para ${endpoint}:`, error);
+                alert(`Não foi possível conectar ao cérebro (backend).\nVerifique se o servidor está rodando e acessível.\n\nDetalhes: ${error.message}`);
+                return null;
+            }
+        }
+
+        async function checkAiStatus() {
+            const data = await apiFetch('/ai-status');
+            if (!data) return;
+
+            aiAvailable = data.ai_available;
+            aiModel = data.model || 'N/A';
+            
+            if (aiAvailable) {
+                aiStatusText.textContent = `IA ativa • ${aiModel}`;
+                aiStatusText.className = 'text-green-400';
+                aiModelBadge.textContent = aiModel;
+                askAiBtn.disabled = false;
+                askAiBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                aiStatusText.textContent = 'IA indisponível';
+                aiStatusText.className = 'text-amber-400';
+                aiModelBadge.textContent = 'Offline';
+                askAiBtn.disabled = true;
+                askAiBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        async function loadInitialNotes() {
+            setLoading(true);
+            const savedNotes = await apiFetch('/get-all-notes');
+            if (savedNotes) {
+                nodes = savedNotes.map(note => ({
+                    id: `note-${note.id}`,
+                    content: note.content,
+                    type: 'note'
+                }));
+                await fetchBackendConnections();
+                updateGraph();
+            }
+            setLoading(false);
+        }
+        
+        async function fetchBackendConnections() {
+            const data = await apiFetch('/get-connections');
+            if (data && data.status === 'success' && data.connections) {
+                links = links.filter(l => l.source.type === 'query' || l.target.type === 'query');
+                data.connections.forEach(conn => {
+                    const node1 = nodes.find(n => n.id === `note-${conn.id1}`);
+                    const node2 = nodes.find(n => n.id === `note-${conn.id2}`);
+                    if (node1 && node2) {
+                        links.push({
+                            source: node1, target: node2,
+                            strength: conn.similarity, type: 'memory-connection'
+                        });
+                    }
+                });
+                updateGraph();
+                if (nodes.length > 3) setTimeout(fitToView, 500);
+            }
+        }
+        
+        async function addNote() {
+            const content = noteInput.value.trim();
+            if (content === '') return;
+            setLoading(true);
+            closeModal('addModal');
+            
+            const data = await apiFetch('/add-note', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: content })
+            });
+            
+            if (data) {
+                const newNode = { id: `note-${data.id}`, content: data.content, type: 'note' };
+                nodes.push(newNode);
+                await fetchBackendConnections(); // Atualiza conexões
+                updateGraph();
+                noteInput.value = '';
+            }
+            setLoading(false);
+        }
+        
+        async function askQuestion(useAi = false) {
+            const query = queryInput.value.trim();
+            if (query === '') return;
+            
+            setLoading(true);
+            closeModal('searchModal');
+            
+            // Remove buscas anteriores
+            nodes = nodes.filter(n => n.type !== 'query');
+            links = links.filter(l => l.source.type !== 'query' && l.target.type !== 'query');
+            
+            const endpoint = useAi ? '/ask-ai' : '/ask';
+            const body = { query: query };
+
+            const data = await apiFetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            setLoading(false);
+            if (!data) return;
+
+            queryInput.value = '';
+            
+            if (useAi) {
+                showAiResponse(data.query, data.ai_response, data.sources || []);
+                const sourcesContent = (data.sources || []).map(s => s.content);
+                if (sourcesContent.length > 0) {
+                    addQueryNodeToGraph(query, sourcesContent, true);
+                }
+            } else {
+                 if (data.results && data.results.length > 0) {
+                    addQueryNodeToGraph(query, data.results, false);
+                } else {
+                    alert("Não encontrei nenhuma memória relevante para sua pergunta.");
+                }
+            }
+        }
+
+        function addQueryNodeToGraph(query, relatedContent, isAi) {
+            const queryNode = {
+                id: `query-${Date.now()}`,
+                content: `${isAi ? '✨' : '🔍'} ${query}`,
+                type: 'query'
+            };
+            nodes.push(queryNode);
+
+            relatedContent.forEach(content => {
+                const targetNode = nodes.find(n => n.type === 'note' && n.content === content);
+                if (targetNode) {
+                    links.push({ source: queryNode, target: targetNode });
+                }
+            });
+
+            updateGraph();
+            setTimeout(() => {
+                document.querySelector('.node-query')?.classList.add('search-active');
+            }, 500);
+        }
+
+        // --- Funções de UI e Grafo (permanecem praticamente as mesmas) ---
+        
+        function showAiResponse(query, response, sources) {
+            userQuery.textContent = query;
+            aiResponseContent.textContent = response;
+            sourcesList.innerHTML = '';
+            if (sources && sources.length > 0) {
+                sources.forEach(source => {
+                    const sourceElement = document.createElement('div');
+                    sourceElement.className = 'bg-slate-800/50 rounded-lg p-3 border border-slate-700/30 cursor-pointer hover:bg-slate-700/50';
+                    sourceElement.innerHTML = `<p class="text-slate-300 text-sm truncate">${source.content}</p><span class="text-cyan-300 text-xs">${(source.score * 100).toFixed(0)}%</span>`;
+                    sourceElement.onclick = () => { closeModal('aiResponseModal'); setTimeout(() => showMemory(source.content), 300); };
+                    sourcesList.appendChild(sourceElement);
+                });
+                document.getElementById('sourcesSection').style.display = 'block';
+            } else {
+                document.getElementById('sourcesSection').style.display = 'none';
+            }
+            openModal('aiResponseModal');
+        }
+
+        function copyAiResponse() {
+            navigator.clipboard.writeText(aiResponseContent.textContent).then(() => {
+                const button = event.target;
+                const originalText = button.textContent;
+                button.textContent = 'Copiado!';
+                setTimeout(() => { button.textContent = originalText; }, 2000);
+            });
+        }
+        
+        fab.addEventListener('click', () => {
+            fabMenu.classList.toggle('hidden');
+            fab.classList.toggle('rotate-45');
+            fabIconPlus.classList.toggle('hidden');
+            fabIconClose.classList.toggle('hidden');
+        });
+
+        function openModal(modalId) {
+            const modal = document.getElementById(modalId);
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+            if (modalId === 'addModal') noteInput.focus();
+            if (modalId === 'searchModal') queryInput.focus();
+        }
+
+        function closeModal(modalId, event) {
+            if (event && event.target.closest('.glass-effect, .memory-modal')) return;
+            const modal = document.getElementById(modalId);
+            modal.classList.add('opacity-0');
+            setTimeout(() => modal.classList.add('hidden'), 300);
+        }
+        
+        function setLoading(isLoading) {
+            loadingSpinner.classList.toggle('hidden', !isLoading);
+        }
+
+        function updateStats() {
+            const memoryNodes = nodes.filter(n => n.type === 'note').length;
+            nodeCount.textContent = `${memoryNodes} memória${memoryNodes !== 1 ? 's' : ''}`;
+        }
+
+        function showMemory(content) {
+            memoryContent.textContent = content;
+            openModal('memoryModal');
+        }
+
+        function clearSearch() {
+            nodes = nodes.filter(n => n.type !== 'query');
+            links = [];
+            fetchBackendConnections();
+            updateGraph();
+        }
+
+        let nodes = [];
+        let links = [];
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph-container").append("svg").attr("width", width).attr("height", height);
+        const g = svg.append("g");
+        const zoom = d3.zoom().scaleExtent([0.1, 4]).on("zoom", (event) => g.attr("transform", event.transform));
+        svg.call(zoom);
+
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d => d.id).distance(width < 768 ? 100 : 150))
+            .force("charge", d3.forceManyBody().strength(width < 768 ? -300 : -400))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collision", d3.forceCollide().radius(40));
+
+        let link = g.append("g").attr("class", "links").selectAll("line");
+        let node = g.append("g").attr("class", "nodes").selectAll("g");
+
+        function resetZoom() {
+            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+        }
+
+        function fitToView() {
+            if (nodes.length === 0) return;
+            const bounds = g.node().getBBox();
+            const fullWidth = bounds.width, fullHeight = bounds.height;
+            const midX = bounds.x + fullWidth / 2, midY = bounds.y + fullHeight / 2;
+            if (fullWidth === 0 || fullHeight === 0) return;
+            const scale = 0.85 / Math.max(fullWidth / width, fullHeight / height);
+            const translate = [width / 2 - scale * midX, height / 2 - scale * midY];
+            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale));
+        }
+
+        function updateGraph() {
+            link = link.data(links, d => `${d.source.id}-${d.target.id}`);
+            link.exit().remove();
+            link = link.enter().append("line").attr("class", "link").merge(link);
+            
+            node = node.data(nodes, d => d.id);
+            node.exit().remove();
+            const nodeEnter = node.enter().append("g")
+                .attr("class", d => `node node-${d.type}`)
+                .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended))
+                .on("click", (event, d) => { if (d.type === 'note') showMemory(d.content); });
+            
+            nodeEnter.append("circle").attr("r", d => d.type === 'query' ? 12 : 10);
+            nodeEnter.append("text").attr("dy", 25).attr("text-anchor", "middle").style("font-size", "10px").style("fill", "#94a3b8").text(d => d.content.substring(0, 20) + (d.content.length > 20 ? '...' : ''));
+            node = nodeEnter.merge(node);
+            
+            simulation.nodes(nodes).on("tick", ticked);
+            simulation.force("link").links(links);
+            simulation.alpha(1).restart();
+            updateStats();
+        }
+
+        function ticked() {
+            link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+            node.attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+        }
+        function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null; d.fy = null;
+        }
+
+        addNoteBtn.addEventListener('click', addNote);
+        noteInput.addEventListener('keypress', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote(); } });
+        
+        askBtn.addEventListener('click', () => askQuestion(false));
+        askAiBtn.addEventListener('click', () => askQuestion(true));
+        queryInput.addEventListener('keypress', e => { if (e.key === 'Enter') { askQuestion(e.ctrlKey || e.metaKey); } });
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadInitialNotes();
+            await checkAiStatus();
+        });
+
+        window.addEventListener('resize', () => {
+            const newWidth = window.innerWidth;
+            const newHeight = window.innerHeight;
+            svg.attr("width", newWidth).attr("height", newHeight);
+            simulation.force("center", d3.forceCenter(newWidth / 2, newHeight / 2)).restart();
+        });
+    </script>
+</body>
+</html>

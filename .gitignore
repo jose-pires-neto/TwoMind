@@ -1,0 +1,19 @@
+# Arquivos de ambiente e sensiveis
+cert.pem
+key.pem
+user_config.json
+tunnel_url.txt
+
+# Pasta do Cloudflare
+cloudflare/
+
+# Arquivos de dependencias e cache
+my_index.faiss
+notes.pkl
+
+# Outros arquivos HTML que nao devem subir
+login_template.html
+
+# Arquivos especificos do sistema operacional (opcional, mas boa pratica)
+.DS_Store
+Thumbs.db
