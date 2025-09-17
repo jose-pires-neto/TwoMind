@@ -3,6 +3,7 @@ cert.pem
 key.pem
 user_config.json
 tunnel_url.txt
+categories.pkl
 
 # Pasta do Cloudflare
 cloudflare/
